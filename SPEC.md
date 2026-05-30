@@ -1,8 +1,8 @@
-# Skilldex Product and Technical Spec
+# SkillsDex Product and Technical Spec
 
 ## Summary
 
-Skilldex is a private hosted skill library plus CLI for syncing reusable AI-agent skills across machines. The first version targets Codex only and installs selected Markdown-based skills into the user's global Codex skills directory.
+SkillsDex is a private hosted skill library plus CLI for syncing reusable AI-agent skills across machines. The first version targets Codex only and installs selected Markdown-based skills into the user's global Codex skills directory.
 
 Positioning:
 
@@ -101,7 +101,7 @@ The owner slug is a namespace label, not an authorization boundary. The server m
 
 ## Multi-Tenancy
 
-Skilldex is a multi-tenant hosted app from v0.
+SkillsDex is a multi-tenant hosted app from v0.
 
 Each user has an account and owns a private namespace. Authenticated users can list, read, create, update, archive, and install only skills they own, unless explicit team-sharing support is added later.
 
@@ -139,7 +139,7 @@ System skills use:
 ~/.codex/skills/.system/<skill>/SKILL.md
 ```
 
-Skilldex-managed user skills should avoid `.system` and install as flat directories:
+SkillsDex-managed user skills should avoid `.system` and install as flat directories:
 
 ```text
 ~/.codex/skills/<owner>--<slug>/SKILL.md
@@ -199,14 +199,14 @@ Core create/edit/save flows should work without JavaScript. CodeMirror should pr
 
 ### CLI Flow
 
-1. User runs `skilldex login`.
+1. User runs `skillsdex login`.
 2. CLI stores auth locally.
-3. User runs `skilldex skills`.
+3. User runs `skillsdex skills`.
 4. CLI lists private skills available to the authenticated user.
-5. User runs `skilldex install iain/debugging --target codex`.
+5. User runs `skillsdex install iain/debugging --target codex`.
 6. CLI downloads the skill and writes `~/.codex/skills/iain--debugging/SKILL.md`.
 7. CLI records the install in its local manifest.
-8. User runs `skilldex sync` on another day/machine.
+8. User runs `skillsdex sync` on another day/machine.
 9. CLI updates installed managed skills if remote revisions changed.
 
 ## CLI Spec
@@ -214,50 +214,50 @@ Core create/edit/save flows should work without JavaScript. CodeMirror should pr
 Name:
 
 ```bash
-skilldex
+skillsdex
 ```
 
 Commands:
 
 ```bash
-skilldex serve
-skilldex login
-skilldex logout
-skilldex whoami
-skilldex skills
-skilldex show <owner>/<slug>
-skilldex install <owner>/<slug> --target codex
-skilldex installed
-skilldex sync
-skilldex uninstall <owner>/<slug> --target codex
-skilldex doctor
+skillsdex serve
+skillsdex login
+skillsdex logout
+skillsdex whoami
+skillsdex skills
+skillsdex show <owner>/<slug>
+skillsdex install <owner>/<slug> --target codex
+skillsdex installed
+skillsdex sync
+skillsdex uninstall <owner>/<slug> --target codex
+skillsdex doctor
 ```
 
-Phase 1 should be one Go binary with subcommands. `skilldex serve` runs the local web app and API. The same binary also provides CLI install/sync commands.
+Phase 1 should be one Go binary with subcommands. `skillsdex serve` runs the local web app and API. The same binary also provides CLI install/sync commands.
 
 Target handling:
 
 - `--target` should be supported from the start.
 - The default target should be `codex`.
 - If `--target` is omitted, use the configured default target.
-- `skilldex config set default_target codex` can be added early or deferred.
+- `skillsdex config set default_target codex` can be added early or deferred.
 
 Recommended v0 command examples:
 
 ```bash
-skilldex login
-skilldex skills
-skilldex install iain/debugging --target codex
-skilldex sync
+skillsdex login
+skillsdex skills
+skillsdex install iain/debugging --target codex
+skillsdex sync
 ```
 
 ### `login`
 
-Authenticate with the Skilldex server by storing an API token generated in the web app.
+Authenticate with the SkillsDex server by storing an API token generated in the web app.
 
 V0 should use API tokens for CLI auth. Tokens can be generated and viewed later in the web app. This is less secure than show-once tokens, but it is acceptable for the local-first phase 1 and avoids annoying regeneration during testing.
 
-Store local CLI auth outside the manifest, for example in `~/.skilldex/auth.json`.
+Store local CLI auth outside the manifest, for example in `~/.skillsdex/auth.json`.
 
 ### `serve`
 
@@ -271,7 +271,7 @@ Default bind address:
 
 This intentionally binds to all interfaces by default for remote testing. Do not add a forced password change or startup warning for the default admin credentials in phase 1.
 
-On startup, `skilldex serve` should:
+On startup, `skillsdex serve` should:
 
 - create the SQLite database if missing
 - run migrations automatically
@@ -305,8 +305,8 @@ Display metadata and optionally raw Markdown.
 Possible flags:
 
 ```bash
-skilldex show iain/debugging
-skilldex show iain/debugging --raw
+skillsdex show iain/debugging
+skillsdex show iain/debugging --raw
 ```
 
 ### `install`
@@ -386,10 +386,10 @@ For Codex:
 
 ## Local Files
 
-Skilldex should use its own application directory:
+SkillsDex should use its own application directory:
 
 ```text
-~/.skilldex/
+~/.skillsdex/
   config.toml
   auth.json
   manifest.json
@@ -424,7 +424,7 @@ Example:
 }
 ```
 
-The manifest is the source of truth for whether Skilldex owns a local file.
+The manifest is the source of truth for whether SkillsDex owns a local file.
 
 ## Overwrite Rules
 
@@ -709,7 +709,7 @@ hosted database -> GitHub repository
 Possible future command:
 
 ```bash
-skilldex github export
+skillsdex github export
 ```
 
 Avoid bidirectional GitHub sync until the core product is proven. Bidirectional sync introduces conflict resolution, branch policy, deleted-file semantics, and source-of-truth ambiguity.
@@ -723,7 +723,7 @@ skills/
       SKILL.md
     fastmail-triage/
       SKILL.md
-skilldex.json
+skillsdex.json
 README.md
 ```
 
@@ -842,7 +842,7 @@ Phase 1 should use:
 - no React/Next frontend
 - no Docker requirement
 
-The initial deployment target is local execution via `skilldex serve`. Docker should remain easy later, but should not be required for phase 1 testing.
+The initial deployment target is local execution via `skillsdex serve`. Docker should remain easy later, but should not be required for phase 1 testing.
 
 The CLI and web app are both part of phase 1: the CLI proves install/sync, and the web app provides the primary way to browse, create, and update skills.
 
@@ -850,7 +850,7 @@ The CLI and web app are both part of phase 1: the CLI proves install/sync, and t
 
 The first useful release is complete when:
 
-1. `skilldex serve` starts the web app/API on `0.0.0.0:8765`.
+1. `skillsdex serve` starts the web app/API on `0.0.0.0:8765`.
 2. First startup creates/migrates the SQLite database.
 3. First startup creates `admin` / `admin` if no users exist.
 4. A user can log into the web app.
@@ -868,10 +868,10 @@ The first useful release is complete when:
 16. A user can view the raw `SKILL.md` for a skill.
 17. A user can generate and later view an API token in the web app.
 18. A user can authenticate the CLI with that API token.
-19. `skilldex skills` lists the user's skills.
-20. `skilldex install iain/debugging --target codex` writes a Codex skill to `~/.codex/skills/iain--debugging/SKILL.md`.
-21. `skilldex installed` shows the local install.
-22. Editing the skill in the web app and running `skilldex sync` updates the local install.
+19. `skillsdex skills` lists the user's skills.
+20. `skillsdex install iain/debugging --target codex` writes a Codex skill to `~/.codex/skills/iain--debugging/SKILL.md`.
+21. `skillsdex installed` shows the local install.
+22. Editing the skill in the web app and running `skillsdex sync` updates the local install.
 23. If the local file was manually edited, `sync` detects the hash mismatch and does not overwrite without confirmation.
 24. If an unmanaged target file already exists, interactive CLI prompts before overwriting.
 25. If an unmanaged target file already exists in non-interactive mode, CLI fails unless an explicit future force flag is used.
@@ -879,9 +879,9 @@ The first useful release is complete when:
 
 ## Phase 1 Decisions
 
-- Product name and binary: `skilldex`.
+- Product name and binary: `skillsdex`.
 - One Go binary with subcommands.
-- `skilldex serve` runs the web app and API.
+- `skillsdex serve` runs the web app and API.
 - Default server bind address: `0.0.0.0:8765`.
 - Local binary execution is the phase 1 deployment target.
 - Docker should be easy later, but is not part of phase 1.
@@ -915,7 +915,7 @@ The first useful release is complete when:
 Build the first implementation in this order:
 
 1. Create the single Go binary skeleton with subcommands.
-2. Implement `skilldex serve`.
+2. Implement `skillsdex serve`.
 3. Create the SQLite schema and automatic migrations.
 4. Create the default `admin` / `admin` user if no users exist.
 5. Add web auth with sessions.
