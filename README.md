@@ -91,12 +91,19 @@ Fresh installs seed useful starter skills under the `admin` namespace:
 
 ## What We Do Next
 
-The next project work should stay focused on making the phase 1 loop obvious and reliable:
+Current context:
 
-1. Commit the seeded default skills and this quickstart.
-2. Test the complete flow from a clean home directory: `serve`, web login, token generation, CLI login, `skills`, `install`, `sync`, `installed`, and modified-file protection.
-3. Add a guided setup page or checklist in the web app so new users know how to generate a token and install their first skill.
-4. Add a first-class “install recommended defaults” flow after CLI auth.
+- Phase 1 implementation is in place as one `skillsdex` binary.
+- The default starter skill library is seeded into the `admin` namespace.
+- The web UI has been redesigned for clearer navigation, denser skill browsing, better install guidance, and light/dark themes.
+- The CLI install/sync loop is the core product path and should stay the main polish target.
+
+Near-term plan:
+
+1. Test the complete flow from a clean home directory: `serve`, web login, token generation, CLI login, `skills`, `install`, `sync`, `installed`, and modified-file protection.
+2. Add a guided setup page or checklist in the web app so new users know how to generate a token and install their first skill.
+3. Add a first-class “install recommended defaults” flow after CLI auth.
+4. Make the theme toggle available before login, or add an equivalent compact control on the login page.
 5. Only after the install/sync loop is polished, revisit phase 2 items such as teams, GitHub export, and additional agent targets.
 
 ## Checks
