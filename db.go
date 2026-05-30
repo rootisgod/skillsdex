@@ -102,7 +102,10 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
-	return ensureDefaultAdmin(db)
+	if err := ensureDefaultAdmin(db); err != nil {
+		return err
+	}
+	return ensureDefaultSkills(db)
 }
 
 func ensureDefaultAdmin(db *sql.DB) error {
@@ -120,6 +123,335 @@ func ensureDefaultAdmin(db *sql.DB) error {
 	_, err = db.Exec(`INSERT INTO users (id, username, password_hash, is_admin, created_at) VALUES (?, ?, ?, 1, ?)`,
 		newID("usr"), "admin", string(hash), nowUTC().Format(time.RFC3339))
 	return err
+}
+
+func ensureDefaultSkills(db *sql.DB) error {
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		if isNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	for _, skill := range defaultSkills() {
+		_, err = getSkill(ctx, db, admin.ID, "admin", skill.Slug)
+		if err == nil {
+			continue
+		}
+		if !isNotFound(err) {
+			return err
+		}
+		if _, err = createSkill(ctx, db, admin, skill); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func defaultSkills() []SkillInput {
+	return []SkillInput{
+		{
+			Owner:            "admin",
+			Slug:             "five-advisor-review",
+			Name:             "Five Advisor Review",
+			Description:      "Use when you need a decision, plan, proposal, or idea stress-tested from multiple viewpoints before choosing a concrete next step.",
+			ShortDescription: "Stress-test decisions with five shuffled advisors",
+			Body: `# Five Advisor Review
+
+Use five advisors:
+
+1. Contrarian - what could fail?
+2. First Principles - what problem are we really solving?
+3. Expansionist - what upside are we missing?
+4. Outsider - does this make sense to someone new?
+5. Executor - what would you actually do Monday morning?
+
+Have each advisor give a short answer.
+
+Then anonymize and shuffle their responses, labeling them Response A through Response E. Make the advisors peer-review the anonymous responses:
+
+- Which response is strongest?
+- Which has the biggest blind spot?
+- What did all five miss?
+
+Finish with:
+
+- Best recommendation
+- Biggest blind spot
+- What everyone missed
+- One concrete next step`,
+		},
+		{
+			Owner:            "admin",
+			Slug:             "systematic-debugging",
+			Name:             "Systematic Debugging",
+			Description:      "Use when tests fail, runtime behavior is wrong, or a regression needs to be isolated without guessing.",
+			ShortDescription: "Debug failures with evidence and minimal changes",
+			Body: `# Systematic Debugging
+
+Start by stating the exact failure, expected behavior, observed behavior, and the smallest reproduction available.
+
+Work in this order:
+
+1. Reproduce the issue with the narrowest command, test, or input.
+2. Identify the boundary where correct behavior becomes incorrect.
+3. List two or three plausible causes, then rank them by evidence.
+4. Inspect code, logs, state, and recent changes before editing.
+5. Make the smallest targeted fix.
+6. Re-run the failing check and at least one nearby regression check.
+
+Avoid broad rewrites, speculative fixes, and changing unrelated behavior.
+
+Finish with:
+
+- Root cause
+- Fix made or recommended
+- Verification run
+- Remaining risk`,
+		},
+		{
+			Owner:            "admin",
+			Slug:             "code-review",
+			Name:             "Code Review",
+			Description:      "Use when reviewing a code change for bugs, regressions, missing tests, security issues, and maintainability risks.",
+			ShortDescription: "Review code with findings first",
+			Body: `# Code Review
+
+Review as a senior engineer looking for concrete defects, not style preferences.
+
+Prioritize:
+
+1. Correctness bugs and behavioral regressions.
+2. Security, privacy, and data integrity risks.
+3. Missing tests for changed behavior.
+4. Edge cases, concurrency, error handling, and migration safety.
+5. Maintainability issues only when they create real risk.
+
+For every finding, include:
+
+- Severity
+- File and line reference when available
+- What can fail
+- Why it can fail
+- A specific fix direction
+
+Keep summaries short. If there are no findings, say that clearly and mention residual test gaps.`,
+		},
+		{
+			Owner:            "admin",
+			Slug:             "test-strategy",
+			Name:             "Test Strategy",
+			Description:      "Use when deciding what tests to add for a feature, bug fix, refactor, migration, or API change.",
+			ShortDescription: "Choose focused tests for the real risk",
+			Body: `# Test Strategy
+
+Start from the behavior that could break, not from implementation details.
+
+Create a compact test plan with:
+
+1. Core happy path.
+2. Important failure path.
+3. Boundary or edge case.
+4. Regression case for the reported bug or changed contract.
+5. Integration or end-to-end check only if unit tests cannot cover the risk.
+
+For each test, state:
+
+- What it proves
+- Why it matters
+- Setup data
+- Expected assertion
+
+Prefer a small number of high-signal tests over exhaustive low-value coverage. Call out tests that are intentionally deferred and why.`,
+		},
+		{
+			Owner:            "admin",
+			Slug:             "implementation-plan",
+			Name:             "Implementation Plan",
+			Description:      "Use before building a non-trivial change that needs sequencing, scope control, and verification.",
+			ShortDescription: "Turn a request into a scoped build plan",
+			Body: `# Implementation Plan
+
+Read the relevant code and existing patterns before proposing changes.
+
+Produce a short plan with:
+
+1. Goal and non-goals.
+2. Files or modules likely to change.
+3. Data model, API, or UI contracts affected.
+4. Step-by-step implementation sequence.
+5. Verification commands or manual checks.
+6. Rollback or mitigation notes for risky changes.
+
+Keep the plan practical. Prefer the smallest design that satisfies the request and fits the current codebase.
+
+If the request is ambiguous, state the assumption you will use and why it is reasonable.`,
+		},
+		{
+			Owner:            "admin",
+			Slug:             "research-brief",
+			Name:             "Research Brief",
+			Description:      "Use when gathering current information, comparing options, or summarizing sources for a decision.",
+			ShortDescription: "Research with sources, dates, and decision relevance",
+			Body: `# Research Brief
+
+Gather current information from primary or high-quality sources when facts may have changed.
+
+Structure the brief as:
+
+1. Question being answered.
+2. Short answer.
+3. Key findings with dates where relevant.
+4. Source notes and links.
+5. Conflicts, uncertainty, or stale information.
+6. Recommendation or next research step.
+
+Do not overquote. Paraphrase source material and cite links. Separate confirmed facts from inference.`,
+		},
+		{
+			Owner:            "admin",
+			Slug:             "documentation-update",
+			Name:             "Documentation Update",
+			Description:      "Use when writing or revising README, API docs, runbooks, changelogs, setup guides, or user-facing instructions.",
+			ShortDescription: "Write docs that match real behavior",
+			Body: `# Documentation Update
+
+Write documentation from the user's task, not from the implementation order.
+
+Before editing, verify:
+
+- Current command names, flags, paths, and defaults.
+- Required prerequisites.
+- Expected outputs or side effects.
+- Known limitations.
+
+Use concise sections, runnable examples, and concrete paths. Avoid marketing language and unsupported claims.
+
+Finish by checking that every documented command still matches the code or tested behavior.`,
+		},
+		{
+			Owner:            "admin",
+			Slug:             "security-review",
+			Name:             "Security Review",
+			Description:      "Use when evaluating auth, authorization, tokens, file writes, secrets, web handlers, or data isolation.",
+			ShortDescription: "Check security boundaries and abuse cases",
+			Body: `# Security Review
+
+Review the change from an abuse-case perspective.
+
+Check:
+
+1. Authentication: who proves identity and how?
+2. Authorization: what tenant, owner, or role boundary is enforced?
+3. Secrets: are tokens, keys, passwords, and logs handled safely?
+4. Inputs: are paths, URLs, JSON, forms, and filenames validated?
+5. Writes: can the change overwrite, delete, or expose unintended data?
+6. Defaults: are first-run and local-development shortcuts clearly scoped?
+
+Output:
+
+- Highest-risk issue
+- Concrete exploit or failure scenario
+- Minimal fix
+- Residual risk after the fix`,
+		},
+		{
+			Owner:            "admin",
+			Slug:             "frontend-polish",
+			Name:             "Frontend Polish",
+			Description:      "Use when improving a web UI for clarity, responsive behavior, accessibility, and practical workflow quality.",
+			ShortDescription: "Improve UI usability without decorative churn",
+			Body: `# Frontend Polish
+
+Evaluate the interface as a working tool.
+
+Check:
+
+1. Primary task is visible and efficient.
+2. Controls use familiar patterns and clear labels.
+3. Text fits at mobile and desktop widths.
+4. Empty, loading, error, and success states are handled.
+5. Color, spacing, and typography support scanning.
+6. Keyboard and screen-reader basics are respected.
+
+Make focused changes that improve the workflow. Avoid decorative redesigns unless the request is explicitly visual.`,
+		},
+		{
+			Owner:            "admin",
+			Slug:             "product-interface-redesign",
+			Name:             "Product Interface Redesign",
+			Description:      "Use when a web app interface needs a substantial quality jump across layout, visual hierarchy, workflow clarity, accessibility, and responsive behavior.",
+			ShortDescription: "Redesign app UI with product context and concrete implementation",
+			Body: `# Product Interface Redesign
+
+Use this when the current interface feels too rough, generic, cramped, confusing, or unfinished.
+
+Start by identifying:
+
+- Primary users and their repeated jobs.
+- The most important screen and the most important action on that screen.
+- Existing design constraints, components, CSS, framework, and data density.
+- What must stay simple, fast, and server-rendered.
+
+Audit the current UI across:
+
+1. Information architecture: navigation, page titles, hierarchy, and wayfinding.
+2. Workflow clarity: create, edit, preview, install, token setup, errors, and empty states.
+3. Visual system: spacing, typography, contrast, buttons, forms, tables, panels, and status treatments.
+4. Interaction quality: keyboard use, focus states, confirmation flows, and destructive actions.
+5. Responsive behavior: mobile, tablet, and desktop layouts without text overlap.
+6. Accessibility: semantic structure, labels, color contrast, focus visibility, and readable sizes.
+
+Design direction:
+
+- For operational tools, prefer calm, dense, scannable layouts over marketing-style pages.
+- Make the first-run path obvious without adding explanatory clutter everywhere.
+- Use restrained color with clear accents for actions and status.
+- Keep repeated content easy to compare in tables or compact lists.
+- Do not nest cards inside cards.
+- Do not use decorative gradients, blobs, or oversized hero sections for app workflows.
+
+Before editing, describe the target interface in one paragraph and list the concrete screens/components to change.
+
+When implementing:
+
+1. Improve the layout and component system first.
+2. Add explicit empty, error, and success states where they matter.
+3. Tighten form ergonomics and button placement.
+4. Verify mobile and desktop behavior.
+5. Keep scope focused on the requested UI improvement.
+
+Finish with:
+
+- What changed visually
+- What workflow became easier
+- Accessibility or responsive checks performed
+- Remaining UI debt
+- One next polish step`,
+		},
+		{
+			Owner:            "admin",
+			Slug:             "pull-request-summary",
+			Name:             "Pull Request Summary",
+			Description:      "Use when summarizing a completed change for a pull request, commit message, release note, or handoff.",
+			ShortDescription: "Summarize changes, tests, and risk",
+			Body: `# Pull Request Summary
+
+Summarize the change for a reviewer who needs to understand impact quickly.
+
+Include:
+
+- What changed
+- Why it changed
+- User-visible behavior
+- Data model, API, or migration impact
+- Tests and checks run
+- Known gaps or follow-up work
+
+Keep it factual. Do not claim tests were run unless they were run. Mention any manual verification separately from automated tests.`,
+		},
+	}
 }
 
 func getUserByUsername(ctx context.Context, db *sql.DB, username string) (*User, error) {

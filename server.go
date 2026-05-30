@@ -591,7 +591,7 @@ func loginForm(msg string) template.HTML {
 	if msg != "" {
 		b.WriteString(`<p class="flash">` + html.EscapeString(msg) + `</p>`)
 	}
-	b.WriteString(`<section class="panel narrow"><h1>SkillsDex</h1><form method="post" action="/login">
+	b.WriteString(`<section class="login-shell"><div class="login-brand"><div class="mark">SD</div><h1>SkillsDex</h1><p>Private Codex skills, versioned and ready to install.</p></div><form class="panel login-panel" method="post" action="/login">
 		<label>Username <input name="username" autocomplete="username" required autofocus></label>
 		<label>Password <input name="password" type="password" autocomplete="current-password" required></label>
 		<button type="submit">Log in</button>
@@ -601,7 +601,7 @@ func loginForm(msg string) template.HTML {
 
 func usersPage(users []User, msg string) template.HTML {
 	var b strings.Builder
-	b.WriteString(`<div class="split"><section><h1>Users</h1>`)
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Admin</p><h1>Users</h1></div></header><div class="split"><section class="surface">`)
 	if msg != "" {
 		b.WriteString(`<p class="flash">` + html.EscapeString(msg) + `</p>`)
 	}
@@ -615,9 +615,9 @@ func usersPage(users []User, msg string) template.HTML {
 		if u.IsAdmin {
 			role = "admin"
 		}
-		b.WriteString(`<tr><td>` + html.EscapeString(u.Username) + `</td><td>` + html.EscapeString(u.Email) + `</td><td>` + role + `</td><td>` + status + `</td><td><a href="/admin/users/` + html.EscapeString(u.ID) + `">Edit</a></td></tr>`)
+		b.WriteString(`<tr><td><strong>` + html.EscapeString(u.Username) + `</strong></td><td>` + html.EscapeString(u.Email) + `</td><td><span class="pill">` + role + `</span></td><td><span class="pill ` + status + `">` + status + `</span></td><td><a href="/admin/users/` + html.EscapeString(u.ID) + `">Edit</a></td></tr>`)
 	}
-	b.WriteString(`</tbody></table></section><section class="panel"><h2>Create User</h2><form method="post" action="/admin/users">
+	b.WriteString(`</tbody></table></section><section class="panel sticky"><h2>Create User</h2><form method="post" action="/admin/users">
 		<label>Username <input name="username" required pattern="[a-z0-9][a-z0-9-]{0,62}"></label>
 		<label>Email <input name="email" type="email"></label>
 		<label>Password <input name="password" type="password" required></label>
@@ -629,7 +629,7 @@ func usersPage(users []User, msg string) template.HTML {
 
 func userEditPage(u *User, msg string) template.HTML {
 	var b strings.Builder
-	b.WriteString(`<section class="panel narrow"><h1>Edit ` + html.EscapeString(u.Username) + `</h1>`)
+	b.WriteString(`<section class="panel narrow"><p class="eyebrow">Admin</p><h1>Edit ` + html.EscapeString(u.Username) + `</h1>`)
 	if msg != "" {
 		b.WriteString(`<p class="flash">` + html.EscapeString(msg) + `</p>`)
 	}
@@ -651,46 +651,61 @@ func userEditPage(u *User, msg string) template.HTML {
 
 func tokensPage(tokens []APIToken, msg string) template.HTML {
 	var b strings.Builder
-	b.WriteString(`<div class="split"><section><h1>API Tokens</h1>`)
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">CLI access</p><h1>API Tokens</h1></div></header><div class="split"><section class="surface">`)
 	if msg != "" {
 		b.WriteString(`<p class="flash">` + html.EscapeString(msg) + `</p>`)
 	}
 	b.WriteString(`<table><thead><tr><th>Name</th><th>Token</th><th>Created</th><th>Last used</th><th>Status</th><th></th></tr></thead><tbody>`)
+	if len(tokens) == 0 {
+		b.WriteString(`<tr><td colspan="6"><div class="empty">No API tokens yet.</div></td></tr>`)
+	}
 	for _, t := range tokens {
 		status := "active"
 		if t.RevokedAt != "" {
 			status = "revoked"
 		}
-		b.WriteString(`<tr><td>` + html.EscapeString(t.Name) + `</td><td><code>` + html.EscapeString(t.Token) + `</code></td><td>` + t.CreatedAt.Format("2006-01-02 15:04") + `</td><td>` + html.EscapeString(t.LastUsedAt) + `</td><td>` + status + `</td><td>`)
+		b.WriteString(`<tr><td><strong>` + html.EscapeString(t.Name) + `</strong></td><td class="token-cell"><code>` + html.EscapeString(t.Token) + `</code></td><td>` + t.CreatedAt.Format("2006-01-02 15:04") + `</td><td>` + html.EscapeString(t.LastUsedAt) + `</td><td><span class="pill ` + status + `">` + status + `</span></td><td>`)
 		if t.RevokedAt == "" {
 			b.WriteString(`<form method="post" action="/tokens/` + html.EscapeString(t.ID) + `/revoke"><button class="link danger" type="submit">Revoke</button></form>`)
 		}
 		b.WriteString(`</td></tr>`)
 	}
-	b.WriteString(`</tbody></table></section><section class="panel"><h2>New Token</h2><form method="post" action="/tokens">
+	b.WriteString(`</tbody></table></section><aside class="panel sticky"><h2>New Token</h2><form method="post" action="/tokens">
 		<label>Name <input name="name" value="local cli"></label><button type="submit">Generate</button>
-	</form><p class="muted">Use this with <code>skillsdex login</code>.</p></section></div>`)
+	</form><div class="command-card"><span>CLI login</span><pre>skillsdex login --server http://127.0.0.1:8765 --token &lt;token&gt;</pre></div></aside></div>`)
 	return template.HTML(b.String())
 }
 
 func skillsPage(skills []Skill, archived bool) template.HTML {
 	var b strings.Builder
-	b.WriteString(`<header class="pagehead"><h1>Skills</h1><div><a class="button" href="/skills/new">New Skill</a> `)
+	active := 0
+	archivedCount := 0
+	for _, s := range skills {
+		if s.ArchivedAt != "" {
+			archivedCount++
+		} else {
+			active++
+		}
+	}
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Library</p><h1>Skills</h1><div class="metrics"><span><strong>` + fmt.Sprintf("%d", active) + `</strong> active</span><span><strong>` + fmt.Sprintf("%d", archivedCount) + `</strong> archived</span></div></div><div class="actions"><a class="button" href="/skills/new">New Skill</a> `)
 	if archived {
 		b.WriteString(`<a href="/skills">Hide archived</a>`)
 	} else {
 		b.WriteString(`<a href="/skills?archived=1">Show archived</a>`)
 	}
-	b.WriteString(`</div></header><table><thead><tr><th>Identifier</th><th>Name</th><th>Revision</th><th>Updated</th><th>Status</th></tr></thead><tbody>`)
+	b.WriteString(`</div></header><div class="split wide"><section class="surface"><table><thead><tr><th>Identifier</th><th>Name</th><th>Revision</th><th>Updated</th><th>Status</th></tr></thead><tbody>`)
+	if len(skills) == 0 {
+		b.WriteString(`<tr><td colspan="5"><div class="empty"><strong>No skills yet.</strong><br><a href="/skills/new">Create the first skill</a></div></td></tr>`)
+	}
 	for _, s := range skills {
 		status := "active"
 		if s.ArchivedAt != "" {
 			status = "archived"
 		}
 		id := s.OwnerSlug + "/" + s.Slug
-		b.WriteString(`<tr><td><a href="/skills/` + html.EscapeString(id) + `">` + html.EscapeString(id) + `</a></td><td>` + html.EscapeString(s.Name) + `</td><td>` + fmt.Sprintf("%d", s.RevisionNumber) + `</td><td>` + s.UpdatedAt.Format("2006-01-02 15:04") + `</td><td>` + status + `</td></tr>`)
+		b.WriteString(`<tr><td><a class="identifier" href="/skills/` + html.EscapeString(id) + `">` + html.EscapeString(id) + `</a></td><td><strong>` + html.EscapeString(s.Name) + `</strong><div class="muted">` + html.EscapeString(s.ShortDescription) + `</div></td><td><span class="rev">r` + fmt.Sprintf("%d", s.RevisionNumber) + `</span></td><td>` + s.UpdatedAt.Format("2006-01-02 15:04") + `</td><td><span class="pill ` + status + `">` + status + `</span></td></tr>`)
 	}
-	b.WriteString(`</tbody></table>`)
+	b.WriteString(`</tbody></table></section><aside class="panel sticky"><h2>Install Starter Skill</h2><div class="command-card"><span>Codex target</span><pre>skillsdex install admin/five-advisor-review --target codex</pre></div><div class="command-card"><span>Sync managed installs</span><pre>skillsdex sync</pre></div></aside></div>`)
 	return template.HTML(b.String())
 }
 
@@ -701,7 +716,7 @@ func skillFormPage(action string, create bool, in SkillInput, msg string) templa
 		title = "New Skill"
 	}
 	preview := renderSkillMarkdown(in)
-	b.WriteString(`<h1>` + title + `</h1>`)
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Editor</p><h1>` + title + `</h1></div></header>`)
 	if msg != "" {
 		b.WriteString(`<p class="flash">` + html.EscapeString(msg) + `</p>`)
 	}
@@ -718,14 +733,14 @@ func skillFormPage(action string, create bool, in SkillInput, msg string) templa
 		<label>Description <textarea name="description" rows="3" required>` + html.EscapeString(in.Description) + `</textarea></label>
 		<label>Short description <input name="short_description" value="` + html.EscapeString(in.ShortDescription) + `"></label>
 		<label>Markdown body <textarea name="body" rows="20" required>` + html.EscapeString(in.Body) + `</textarea></label>
-		<div class="actions"><button name="action" value="save" type="submit">Save Revision</button><button class="secondary" name="action" value="preview" type="submit">Preview</button></div></section><section class="panel"><h2>Generated SKILL.md</h2><pre class="raw">` + html.EscapeString(preview) + `</pre><h2>Rendered Preview</h2><div class="rendered mini">` + simpleMarkdownHTML(in.Body) + `</div></section></form>`)
+		<div class="actions"><button name="action" value="save" type="submit">Save Revision</button><button class="secondary" name="action" value="preview" type="submit">Preview</button></div></section><aside class="panel preview-pane"><h2>Generated SKILL.md</h2><pre class="raw">` + html.EscapeString(preview) + `</pre><h2>Rendered Preview</h2><div class="rendered mini">` + simpleMarkdownHTML(in.Body) + `</div></aside></form>`)
 	return template.HTML(b.String())
 }
 
 func skillDetailPage(s *Skill, raw string) template.HTML {
 	id := s.OwnerSlug + "/" + s.Slug
 	var b strings.Builder
-	b.WriteString(`<header class="pagehead"><div><h1>` + html.EscapeString(id) + `</h1><p>` + html.EscapeString(s.Description) + `</p></div><div>
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Skill</p><h1>` + html.EscapeString(id) + `</h1><p>` + html.EscapeString(s.Description) + `</p><div class="metrics"><span><strong>r` + fmt.Sprintf("%d", s.RevisionNumber) + `</strong> latest</span><span><strong>` + s.UpdatedAt.Format("Jan 2") + `</strong> updated</span></div></div><div class="actions">
 		<a class="button" href="/skills/` + html.EscapeString(id) + `/edit">Edit</a>
 		<a class="button secondary" href="/skills/` + html.EscapeString(id) + `/raw">Raw</a>
 		<a class="button secondary" href="/skills/` + html.EscapeString(id) + `/revisions">Revisions</a></div></header>`)
@@ -734,26 +749,25 @@ func skillDetailPage(s *Skill, raw string) template.HTML {
 	} else {
 		b.WriteString(`<form method="post" action="/skills/` + html.EscapeString(id) + `/archive"><button class="link danger" type="submit">Archive skill</button></form>`)
 	}
-	b.WriteString(`<section class="panel"><h2>Install</h2><pre>skillsdex install ` + html.EscapeString(id) + ` --target codex</pre></section>`)
-	b.WriteString(`<section class="rendered">` + simpleMarkdownHTML(bodyFromSkillMarkdown(raw)) + `</section>`)
+	b.WriteString(`<div class="split wide"><section class="rendered">` + simpleMarkdownHTML(bodyFromSkillMarkdown(raw)) + `</section><aside class="panel sticky"><h2>Install</h2><div class="command-card"><span>Codex</span><pre>skillsdex install ` + html.EscapeString(id) + ` --target codex</pre></div><div class="meta-list"><div><span>Name</span><strong>` + html.EscapeString(s.Name) + `</strong></div><div><span>Short description</span><strong>` + html.EscapeString(s.ShortDescription) + `</strong></div></div></aside></div>`)
 	return template.HTML(b.String())
 }
 
 func revisionsPage(owner, slug string, revs []SkillRevision) template.HTML {
 	id := owner + "/" + slug
 	var b strings.Builder
-	b.WriteString(`<h1>Revisions for ` + html.EscapeString(id) + `</h1><table><thead><tr><th>Revision</th><th>Created</th><th>Hash</th><th></th></tr></thead><tbody>`)
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">History</p><h1>Revisions for ` + html.EscapeString(id) + `</h1></div></header><section class="surface"><table><thead><tr><th>Revision</th><th>Created</th><th>Hash</th><th></th></tr></thead><tbody>`)
 	for _, r := range revs {
-		b.WriteString(`<tr><td>` + fmt.Sprintf("%d", r.RevisionNumber) + `</td><td>` + r.CreatedAt.Format("2006-01-02 15:04") + `</td><td><code>` + html.EscapeString(r.TreeHash) + `</code></td><td><a href="/skills/` + html.EscapeString(id) + `/revisions/` + html.EscapeString(r.ID) + `">View diff</a></td></tr>`)
+		b.WriteString(`<tr><td><span class="rev">r` + fmt.Sprintf("%d", r.RevisionNumber) + `</span></td><td>` + r.CreatedAt.Format("2006-01-02 15:04") + `</td><td><code>` + html.EscapeString(r.TreeHash) + `</code></td><td><a href="/skills/` + html.EscapeString(id) + `/revisions/` + html.EscapeString(r.ID) + `">View diff</a></td></tr>`)
 	}
-	b.WriteString(`</tbody></table>`)
+	b.WriteString(`</tbody></table></section>`)
 	return template.HTML(b.String())
 }
 
 func revisionPage(s *Skill, rev SkillRevision, raw, diff string) template.HTML {
 	id := s.OwnerSlug + "/" + s.Slug
 	var b strings.Builder
-	b.WriteString(`<h1>` + html.EscapeString(id) + ` revision ` + fmt.Sprintf("%d", rev.RevisionNumber) + `</h1>`)
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Revision</p><h1>` + html.EscapeString(id) + ` r` + fmt.Sprintf("%d", rev.RevisionNumber) + `</h1></div></header>`)
 	b.WriteString(`<section class="panel"><h2>Diff from previous revision</h2>` + diffHTML(diff) + `</section>`)
 	b.WriteString(`<section class="panel"><h2>SKILL.md at this revision</h2><pre class="raw">` + html.EscapeString(raw) + `</pre></section>`)
 	return template.HTML(b.String())
@@ -768,67 +782,115 @@ const layoutTmpl = `<!doctype html>
 	<link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-	<nav>
-		<a class="brand" href="/skills">SkillsDex</a>
-		{{if .User}}
-		<a href="/skills">Skills</a>
-		<a href="/tokens">API Tokens</a>
-		{{if .User.IsAdmin}}<a href="/admin/users">Users</a>{{end}}
-		<form method="post" action="/logout"><button class="link" type="submit">Logout {{.User.Username}}</button></form>
-		{{end}}
-	</nav>
-	<main>{{.Body}}</main>
+	<div class="app-shell">
+		<nav>
+			<a class="brand" href="/skills"><span class="brand-mark">SD</span><span>SkillsDex</span></a>
+			{{if .User}}
+			<div class="nav-links">
+				<a href="/skills">Skills</a>
+				<a href="/tokens">API Tokens</a>
+				{{if .User.IsAdmin}}<a href="/admin/users">Users</a>{{end}}
+			</div>
+			<form method="post" action="/logout"><button class="link" type="submit">Logout {{.User.Username}}</button></form>
+			{{end}}
+		</nav>
+		<main>{{.Body}}</main>
+	</div>
 </body>
 </html>`
 
 const css = `
-:root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #202124; background: #f6f7f9; }
+:root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1d232b; background: #eef1f4; --bg: #eef1f4; --surface: #ffffff; --surface-2: #f8fafb; --line: #d8dee5; --text: #1d232b; --muted: #66717d; --accent: #1f6f78; --accent-strong: #15545b; --danger: #a33838; --ok: #237a4d; --warn: #9a6a16; }
 * { box-sizing: border-box; }
-body { margin: 0; }
-nav { height: 56px; display: flex; align-items: center; gap: 18px; padding: 0 28px; background: #fff; border-bottom: 1px solid #dfe3e8; }
-nav a { color: #2b4c6f; text-decoration: none; font-weight: 600; }
+body { margin: 0; min-height: 100vh; background: var(--bg); }
+.app-shell { min-height: 100vh; }
+nav { min-height: 64px; display: flex; align-items: center; gap: 22px; padding: 0 28px; background: rgba(255,255,255,.92); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px); }
+nav a { color: #315365; text-decoration: none; font-weight: 700; }
+nav a:hover { color: var(--accent-strong); }
 nav form { margin-left: auto; }
-.brand { color: #111; font-size: 18px; }
-main { max-width: 1180px; margin: 0 auto; padding: 28px; }
-h1 { font-size: 28px; margin: 0 0 18px; }
-h2 { font-size: 18px; margin: 0 0 14px; }
+.nav-links { display: flex; align-items: center; gap: 6px; }
+.nav-links a { padding: 8px 10px; border-radius: 6px; }
+.nav-links a:hover { background: #edf7f8; }
+.brand { color: var(--text); font-size: 18px; display: inline-flex; align-items: center; gap: 10px; margin-right: 6px; }
+.brand-mark, .mark { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; background: #173f46; color: #fff; font-weight: 800; letter-spacing: 0; }
+main { max-width: 1240px; margin: 0 auto; padding: 30px; }
+h1 { font-size: 30px; line-height: 1.15; margin: 0 0 10px; letter-spacing: 0; }
+h2 { font-size: 18px; margin: 0 0 14px; letter-spacing: 0; }
 p { line-height: 1.55; }
-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #dfe3e8; }
-th, td { text-align: left; padding: 11px 12px; border-bottom: 1px solid #e8ebef; vertical-align: top; }
-th { font-size: 12px; text-transform: uppercase; color: #59636e; background: #fbfbfc; }
+a { color: var(--accent-strong); }
+table { width: 100%; border-collapse: collapse; background: var(--surface); }
+th, td { text-align: left; padding: 14px 14px; border-bottom: 1px solid #e6ebef; vertical-align: middle; }
+th { font-size: 11px; text-transform: uppercase; color: var(--muted); background: var(--surface-2); letter-spacing: .04em; }
+tr:hover td { background: #fbfcfd; }
+tbody tr:last-child td { border-bottom: 0; }
 code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 pre { white-space: pre-wrap; overflow: auto; }
-.panel { background: #fff; border: 1px solid #dfe3e8; border-radius: 8px; padding: 18px; }
-.narrow { max-width: 440px; margin: 42px auto; }
-.split { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 22px; align-items: start; }
-.pagehead { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 20px; }
-.pagehead p { margin: -8px 0 0; color: #59636e; }
+.surface, .panel, .rendered { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 1px 2px rgba(22,30,38,.04); overflow: hidden; }
+.panel { padding: 20px; overflow: visible; }
+.narrow { max-width: 480px; margin: 42px auto; }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 22px; align-items: start; }
+.split.wide { grid-template-columns: minmax(0, 1fr) 380px; }
+.sticky { position: sticky; top: 84px; }
+.pagehead { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 22px; }
+.pagehead p { margin: 0; color: var(--muted); max-width: 720px; }
+.eyebrow { font-size: 12px; font-weight: 800; text-transform: uppercase; color: var(--accent-strong) !important; letter-spacing: .08em; margin-bottom: 6px !important; }
+.metrics { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.metrics span { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 5px 9px; border-radius: 6px; background: #f3f6f7; border: 1px solid #dfe6ea; color: var(--muted); font-size: 13px; }
+.metrics strong { color: var(--text); }
 form { margin: 0; }
-label { display: grid; gap: 6px; margin-bottom: 14px; font-weight: 650; color: #30363d; }
-input, textarea { width: 100%; border: 1px solid #c9d1d9; border-radius: 6px; padding: 9px 10px; font: inherit; background: #fff; }
+label { display: grid; gap: 7px; margin-bottom: 15px; font-weight: 700; color: #303942; }
+input, textarea { width: 100%; border: 1px solid #c7d0d8; border-radius: 6px; padding: 10px 11px; font: inherit; background: #fff; color: var(--text); }
+input:focus, textarea:focus, button:focus-visible, a:focus-visible { outline: 3px solid rgba(31,111,120,.22); outline-offset: 2px; border-color: var(--accent); }
 textarea { resize: vertical; }
-button, .button { display: inline-flex; align-items: center; min-height: 36px; border: 1px solid #244f7d; border-radius: 6px; background: #244f7d; color: #fff; padding: 8px 13px; font: inherit; font-weight: 700; text-decoration: none; cursor: pointer; }
-.secondary { background: #fff; color: #244f7d; }
-.link { border: 0; background: transparent; color: #2b4c6f; padding: 0; min-height: 0; font-weight: 650; }
-.danger { color: #a02c2c; }
+button, .button { display: inline-flex; align-items: center; justify-content: center; min-height: 38px; border: 1px solid var(--accent-strong); border-radius: 6px; background: var(--accent); color: #fff; padding: 8px 14px; font: inherit; font-weight: 800; text-decoration: none; cursor: pointer; }
+button:hover, .button:hover { background: var(--accent-strong); color: #fff; }
+.secondary { background: #fff; color: var(--accent-strong); }
+.secondary:hover { background: #edf7f8; color: var(--accent-strong); }
+.link { border: 0; background: transparent; color: #315365; padding: 0; min-height: 0; font-weight: 750; }
+.link:hover { background: transparent; color: var(--accent-strong); }
+.danger { color: var(--danger); }
 .check { display: flex; align-items: center; gap: 8px; }
 .check input { width: auto; }
 .actions { display: flex; gap: 10px; flex-wrap: wrap; }
-.flash { background: #fff3cd; border: 1px solid #f0d98c; padding: 10px 12px; border-radius: 6px; }
-.editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 440px); gap: 22px; align-items: start; }
-.raw { background: #0f1720; color: #f8fafc; border-radius: 6px; padding: 14px; }
-.rendered { background: #fff; border: 1px solid #dfe3e8; border-radius: 8px; padding: 24px; }
+.flash { background: #fff7e6; border: 1px solid #ecd39a; padding: 11px 13px; border-radius: 6px; color: #6f4c0b; }
+.editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 500px); gap: 22px; align-items: start; }
+.preview-pane { max-height: calc(100vh - 112px); overflow: auto; }
+.raw { background: #111820; color: #f8fafc; border-radius: 6px; padding: 14px; border: 1px solid #263241; }
+.rendered { padding: 26px; overflow: visible; }
+.rendered h1:first-child { margin-top: 0; }
 .mini { padding: 14px; }
-.muted { color: #68737f; }
-.diff { background: #fff; border: 1px solid #dfe3e8; border-radius: 6px; padding: 0; }
+.muted { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.identifier { font-weight: 800; text-decoration: none; }
+.pill, .rev { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 8px; border-radius: 999px; border: 1px solid #d8e0e5; background: #f5f7f8; color: #3f4b55; font-size: 12px; font-weight: 800; }
+.pill.active { color: var(--ok); background: #eef8f2; border-color: #cce8d7; }
+.pill.archived, .pill.revoked, .pill.deactivated { color: var(--warn); background: #fff7e6; border-color: #ecd39a; }
+.token-cell code { display: block; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.empty { padding: 28px; text-align: center; color: var(--muted); }
+.command-card { display: grid; gap: 8px; margin-top: 14px; }
+.command-card span { color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+.command-card pre { margin: 0; background: #111820; color: #f8fafc; border-radius: 6px; padding: 13px; border: 1px solid #263241; }
+.meta-list { display: grid; gap: 12px; margin-top: 18px; }
+.meta-list div { display: grid; gap: 4px; padding-top: 12px; border-top: 1px solid #e6ebef; }
+.meta-list span { color: var(--muted); font-size: 12px; text-transform: uppercase; font-weight: 800; letter-spacing: .06em; }
+.login-shell { min-height: calc(100vh - 120px); display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 34px; align-items: center; max-width: 960px; margin: 0 auto; }
+.login-brand h1 { font-size: 44px; margin-top: 18px; }
+.login-brand p { color: var(--muted); font-size: 18px; max-width: 460px; }
+.login-panel { padding: 24px; }
+.mark { width: 48px; height: 48px; border-radius: 10px; }
+.diff { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 0; }
 .diff span { display: block; padding: 2px 8px; }
 .diff .add { background: #e7f6e7; color: #14532d; }
 .diff .del { background: #fde8e8; color: #842029; }
 .diff .ctx { color: #4b5563; }
 @media (max-width: 820px) {
 	main { padding: 18px; }
-	.split, .editor { grid-template-columns: 1fr; }
+	.split, .split.wide, .editor, .login-shell { grid-template-columns: 1fr; }
 	.pagehead { display: block; }
-	nav { padding: 0 16px; gap: 10px; overflow-x: auto; }
+	.sticky, .preview-pane { position: static; max-height: none; }
+	nav { padding: 0 16px; gap: 10px; overflow-x: auto; align-items: center; }
+	.nav-links { gap: 2px; }
+	.brand span:last-child { display: none; }
+	.token-cell code { max-width: 220px; }
+	h1 { font-size: 26px; }
 }
 `
