@@ -271,6 +271,14 @@ func (a *app) handleSkillRoute(w http.ResponseWriter, r *http.Request) {
 		a.handleSkillNew(w, r, u)
 		return
 	}
+	if rel == "import" {
+		a.handleSkillImport(w, r, u)
+		return
+	}
+	if rel == "top" {
+		a.handleSkillTop(w, r, u)
+		return
+	}
 	parts := strings.Split(rel, "/")
 	if len(parts) < 2 {
 		http.NotFound(w, r)
@@ -324,6 +332,59 @@ func (a *app) handleSkillNew(w http.ResponseWriter, r *http.Request, u *User) {
 		return
 	}
 	http.Redirect(w, r, "/skills/"+s.OwnerSlug+"/"+s.Slug, http.StatusFound)
+}
+
+func (a *app) handleSkillImport(w http.ResponseWriter, r *http.Request, u *User) {
+	switch r.Method {
+	case http.MethodGet:
+		query := strings.TrimSpace(r.URL.Query().Get("q"))
+		var search agentSkillSearchResponse
+		searchMsg := ""
+		if query != "" {
+			var err error
+			search, err = searchAgentSkills(r.Context(), http.DefaultClient, query, 10)
+			if err != nil {
+				searchMsg = err.Error()
+			}
+		}
+		a.render(w, r, u, "Import Skills", skillImportPage("", "", nil, query, search, searchMsg))
+	case http.MethodPost:
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		source := strings.TrimSpace(firstNonEmpty(r.FormValue("source_url"), r.FormValue("github_url")))
+		inputs, err := importSkillInputs(r.Context(), http.DefaultClient, source, u.Username)
+		if err != nil {
+			a.render(w, r, u, "Import Skills", skillImportPage(source, err.Error(), nil, "", agentSkillSearchResponse{}, ""))
+			return
+		}
+		var results []skillImportResult
+		for _, in := range inputs {
+			s, status, err := upsertImportedSkill(r.Context(), a.db, u, in)
+			if err != nil {
+				results = append(results, skillImportResult{Identifier: in.Owner + "/" + in.Slug, Name: in.Name, Status: err.Error()})
+				continue
+			}
+			results = append(results, skillImportResult{Identifier: s.OwnerSlug + "/" + s.Slug, Name: s.Name, Status: status})
+		}
+		a.render(w, r, u, "Import Skills", skillImportPage(source, "", results, "", agentSkillSearchResponse{}, ""))
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (a *app) handleSkillTop(w http.ResponseWriter, r *http.Request, u *User) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	skills, err := topAgentSkills(r.Context(), http.DefaultClient, 100)
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
+	a.render(w, r, u, "Top Skills", topSkillsPage(skills, msg))
 }
 
 func (a *app) handleSkillEdit(w http.ResponseWriter, r *http.Request, u *User, owner, slug string) {
@@ -688,6 +749,8 @@ func skillsPage(skills []Skill, archived bool) template.HTML {
 		}
 	}
 	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Library</p><h1>Skills</h1><div class="metrics"><span><strong>` + fmt.Sprintf("%d", active) + `</strong> active</span><span><strong>` + fmt.Sprintf("%d", archivedCount) + `</strong> archived</span></div></div><div class="actions"><a class="button" href="/skills/new">New Skill</a> `)
+	b.WriteString(`<a class="button secondary" href="/skills/import">Import</a> `)
+	b.WriteString(`<a class="button secondary" href="/skills/top">Top Skills</a> `)
 	if archived {
 		b.WriteString(`<a href="/skills">Hide archived</a>`)
 	} else {
@@ -707,6 +770,97 @@ func skillsPage(skills []Skill, archived bool) template.HTML {
 	}
 	b.WriteString(`</tbody></table></section><aside class="panel sticky"><h2>Install Starter Skill</h2><div class="command-card"><span>Codex target</span><pre>skillsdex install admin/five-advisor-review --target codex</pre></div><div class="command-card"><span>Sync managed installs</span><pre>skillsdex sync</pre></div></aside></div>`)
 	return template.HTML(b.String())
+}
+
+type skillImportResult struct {
+	Identifier string
+	Name       string
+	Status     string
+}
+
+func skillImportPage(source, msg string, results []skillImportResult, searchQuery string, search agentSkillSearchResponse, searchMsg string) template.HTML {
+	var b strings.Builder
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Import</p><h1>Source</h1></div></header><div class="split"><section class="panel"><form method="post" action="/skills/import">
+		<label>Source <input name="source_url" value="` + html.EscapeString(source) + `" placeholder="https://github.com/DannyMac180/skills or https://agentskill.sh/@openclaw/openclaw-debugging" required autofocus></label>
+		<div class="actions"><button type="submit">Import</button><a class="button secondary" href="/skills">Cancel</a></div>
+	</form>`)
+	if msg != "" {
+		b.WriteString(`<p class="flash">` + html.EscapeString(msg) + `</p>`)
+	}
+	if results != nil {
+		b.WriteString(`<table class="result-table"><thead><tr><th>Identifier</th><th>Name</th><th>Status</th></tr></thead><tbody>`)
+		if len(results) == 0 {
+			b.WriteString(`<tr><td colspan="3"><div class="empty">No SKILL.md files found.</div></td></tr>`)
+		}
+		for _, result := range results {
+			id := html.EscapeString(result.Identifier)
+			b.WriteString(`<tr><td><a class="identifier" href="/skills/` + id + `">` + id + `</a></td><td><strong>` + html.EscapeString(result.Name) + `</strong></td><td><span class="pill">` + html.EscapeString(result.Status) + `</span></td></tr>`)
+		}
+		b.WriteString(`</tbody></table>`)
+	}
+	b.WriteString(`<section class="search-block"><h2>Search agentskill.sh</h2><form method="get" action="/skills/import" class="inline-search">
+		<label>Query <input name="q" value="` + html.EscapeString(searchQuery) + `" placeholder="code review, playwright, seo"></label>
+		<button type="submit">Search</button>
+	</form>`)
+	if searchMsg != "" {
+		b.WriteString(`<p class="flash">` + html.EscapeString(searchMsg) + `</p>`)
+	}
+	if searchQuery != "" && searchMsg == "" {
+		if len(search.Results) == 0 {
+			b.WriteString(`<div class="empty">No agentskill.sh results.</div>`)
+		} else {
+			b.WriteString(agentSkillResultsTable(search.Results))
+		}
+	}
+	b.WriteString(`</section>`)
+	b.WriteString(`</section><aside class="panel sticky"><h2>Supported Sources</h2><div class="command-card"><span>GitHub repository</span><pre>https://github.com/owner/repo</pre></div><div class="command-card"><span>GitHub skill folder</span><pre>https://github.com/owner/repo/tree/main/skill-name</pre></div><div class="command-card"><span>agentskill.sh skill</span><pre>https://agentskill.sh/@owner/skill-name</pre></div><div class="command-card"><span>agentskill.sh /learn</span><pre>npx @agentskill.sh/cli@latest setup</pre></div><p><a href="https://agentskill.sh/" target="_blank" rel="noopener">Browse agentskill.sh</a> · <a href="https://agentskill.sh/install" target="_blank" rel="noopener">Install /learn</a></p></aside></div>`)
+	return template.HTML(b.String())
+}
+
+func topSkillsPage(search agentSkillSearchResponse, msg string) template.HTML {
+	var b strings.Builder
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">agentskill.sh</p><h1>Top 100 Skills</h1><p>Ranked feed from agentskill.sh. Import saves the selected SKILL.md into your SkillsDex library.</p></div><div class="actions"><a class="button secondary" href="/skills/import">Import by URL</a><a class="button secondary" href="https://agentskill.sh/" target="_blank" rel="noopener">Browse agentskill.sh</a></div></header><section class="surface">`)
+	if msg != "" {
+		b.WriteString(`<p class="flash">` + html.EscapeString(msg) + `</p>`)
+	}
+	if len(search.Results) == 0 && msg == "" {
+		b.WriteString(`<div class="empty">No top skills returned.</div>`)
+	} else if len(search.Results) > 0 {
+		b.WriteString(agentSkillResultsTable(search.Results))
+	}
+	b.WriteString(`</section>`)
+	return template.HTML(b.String())
+}
+
+func agentSkillResultsTable(results []agentSkillSearchResult) string {
+	var b strings.Builder
+	b.WriteString(`<table class="result-table sortable" data-sort-table><thead><tr><th><button class="sort-head" type="button" data-sort="text">Skill</button></th><th><button class="sort-head" type="button" data-sort="number">Quality</button></th><th><button class="sort-head" type="button" data-sort="number">Security</button></th><th><button class="sort-head" type="button" data-sort="number">GitHub Stars</button></th><th></th></tr></thead><tbody>`)
+	for _, result := range results {
+		slug := html.EscapeString(result.Slug)
+		b.WriteString(`<tr><td data-sort-value="` + html.EscapeString(result.Name) + `"><a class="identifier" href="https://agentskill.sh/@` + slug + `" target="_blank" rel="noopener">` + slug + `</a><div><strong>` + html.EscapeString(result.Name) + `</strong></div><div class="muted">` + html.EscapeString(result.Description) + `</div></td><td data-sort-value="` + scoreSortValue(result.ContentQualityScore) + `">` + scoreLabel(result.ContentQualityScore) + `</td><td data-sort-value="` + scoreSortValue(result.SecurityScore) + `">` + scoreLabel(result.SecurityScore) + `</td><td data-sort-value="` + fmt.Sprintf("%d", result.GitHubStars) + `">` + fmt.Sprintf("%d", result.GitHubStars) + `</td><td><form method="post" action="/skills/import"><input type="hidden" name="source_url" value="@` + slug + `"><button type="submit">Import</button></form></td></tr>`)
+	}
+	b.WriteString(`</tbody></table>`)
+	return b.String()
+}
+
+func scoreLabel(score *int) string {
+	if score == nil {
+		return `<span class="muted">n/a</span>`
+	}
+	status := ""
+	if *score >= 70 {
+		status = " active"
+	} else if *score < 30 {
+		status = " revoked"
+	}
+	return `<span class="pill` + status + `">` + fmt.Sprintf("%d", *score) + `/100</span>`
+}
+
+func scoreSortValue(score *int) string {
+	if score == nil {
+		return "-1"
+	}
+	return fmt.Sprintf("%d", *score)
 }
 
 func skillFormPage(action string, create bool, in SkillInput, msg string) template.HTML {
@@ -797,6 +951,7 @@ const layoutTmpl = `<!doctype html>
 			{{if .User}}
 			<div class="nav-links">
 				<a href="/skills">Skills</a>
+				<a href="/skills/top">Top Skills</a>
 				<a href="/tokens">API Tokens</a>
 				{{if .User.IsAdmin}}<a href="/admin/users">Users</a>{{end}}
 			</div>
@@ -822,6 +977,37 @@ const layoutTmpl = `<!doctype html>
 			try { localStorage.setItem("skillsdex-theme", next); } catch (e) {}
 			apply(next);
 		});
+	})();
+	(function() {
+		document.querySelectorAll("[data-sort-table]").forEach(function(table) {
+			var tbody = table.querySelector("tbody");
+			if (!tbody) return;
+			table.querySelectorAll("[data-sort]").forEach(function(button, index) {
+				button.addEventListener("click", function() {
+					var type = button.getAttribute("data-sort");
+					var current = button.getAttribute("aria-sort") || "none";
+					var direction = current === "ascending" ? "descending" : "ascending";
+					table.querySelectorAll("[data-sort]").forEach(function(other) {
+						other.removeAttribute("aria-sort");
+					});
+					button.setAttribute("aria-sort", direction);
+					var rows = Array.prototype.slice.call(tbody.querySelectorAll("tr"));
+					rows.sort(function(a, b) {
+						var av = sortValue(a.children[index], type);
+						var bv = sortValue(b.children[index], type);
+						if (type === "number") return direction === "ascending" ? av - bv : bv - av;
+						return direction === "ascending" ? av.localeCompare(bv) : bv.localeCompare(av);
+					});
+					rows.forEach(function(row) { tbody.appendChild(row); });
+				});
+			});
+		});
+		function sortValue(cell, type) {
+			if (!cell) return type === "number" ? -1 : "";
+			var raw = cell.getAttribute("data-sort-value") || cell.textContent || "";
+			if (type === "number") return parseFloat(raw) || 0;
+			return raw.trim().toLowerCase();
+		}
 	})();
 	</script>
 </body>
@@ -885,6 +1071,14 @@ button:hover, .button:hover { background: var(--accent-strong); color: #fff; }
 .theme-toggle:hover { background: var(--nav-hover); color: var(--text); }
 .theme-toggle + form { margin-left: 0; }
 .flash { background: var(--warning-bg); border: 1px solid var(--warning-line); padding: 11px 13px; border-radius: 6px; color: var(--warning-text); }
+.search-block { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
+.inline-search { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; margin-bottom: 14px; }
+.inline-search label { margin-bottom: 0; }
+.sort-head { min-height: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: inherit; text-transform: inherit; letter-spacing: inherit; }
+.sort-head:hover { background: transparent; color: var(--accent-strong); }
+.sort-head::after { content: "↕"; margin-left: 5px; color: var(--muted); font-size: 10px; }
+.sort-head[aria-sort="ascending"]::after { content: "↑"; color: var(--accent-strong); }
+.sort-head[aria-sort="descending"]::after { content: "↓"; color: var(--accent-strong); }
 .editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 500px); gap: 22px; align-items: start; }
 .preview-pane { max-height: calc(100vh - 112px); overflow: auto; }
 .raw { background: var(--code-bg); color: var(--code-text); border-radius: 6px; padding: 14px; border: 1px solid #263241; }
@@ -917,6 +1111,7 @@ button:hover, .button:hover { background: var(--accent-strong); color: #fff; }
 @media (max-width: 820px) {
 	main { padding: 18px; }
 	.split, .split.wide, .editor, .login-shell { grid-template-columns: 1fr; }
+	.inline-search { grid-template-columns: 1fr; }
 	.pagehead { display: block; }
 	.sticky, .preview-pane { position: static; max-height: none; }
 	nav { padding: 0 16px; gap: 10px; overflow-x: auto; align-items: center; }

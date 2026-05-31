@@ -1,0 +1,48 @@
+version: '3'
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  build:
+    desc: Build the skillsdex binary
+    cmds:
+      - go build -o skillsdex .
+
+  kill:
+    desc: Kill skillsdex server listening on port 8765
+    silent: true
+    cmds:
+      - |
+        set -eu
+        port=8765
+        pids="$(lsof -tiTCP:${port} -sTCP:LISTEN 2>/dev/null || true)"
+        if [ -z "$pids" ]; then
+          echo "No process is listening on port ${port}."
+          exit 0
+        fi
+        killed=0
+        for pid in $pids; do
+          args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+          case "$args" in
+            *"skillsdex serve"*)
+              echo "Killing skillsdex server PID ${pid} on port ${port}"
+              /bin/kill "$pid"
+              killed=1
+              ;;
+            *)
+              echo "Skipping PID ${pid}; not a skillsdex serve process: ${args}"
+              ;;
+          esac
+        done
+        if [ "$killed" -eq 0 ]; then
+          echo "No skillsdex serve process found on port ${port}."
+        fi
+
+  test:
+    desc: Run Go tests
+    cmds:
+      - go test ./...

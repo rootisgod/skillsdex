@@ -9,7 +9,7 @@ SkillsDex is a private hosted skill library plus CLI for syncing reusable Codex 
 Build the binary:
 
 ```bash
-go build -o skillsdex .
+task build
 ```
 
 Start the web app and API:
@@ -34,8 +34,10 @@ password: admin
 In the web app:
 
 1. Log in as `admin`.
-2. Open `API Tokens`.
-3. Generate a token.
+2. Open `Skills`.
+3. Create a skill, import one from GitHub, or open `Top Skills` to import from agentskill.sh.
+4. Open `API Tokens`.
+5. Generate a token.
 
 Authenticate the CLI:
 
@@ -73,6 +75,24 @@ Inspect local install status:
 ./skillsdex installed
 ```
 
+Stop a local development server on port `8765`:
+
+```bash
+task kill
+```
+
+## Importing Skills
+
+The web app can import a Codex-compatible `SKILL.md` from:
+
+- A GitHub repository root, such as `https://github.com/openai/skills`.
+- A GitHub skill folder, such as `https://github.com/owner/repo/tree/main/skill-name`.
+- An agentskill.sh skill URL or slug, such as `https://agentskill.sh/@openclaw/openclaw-debugging` or `@openclaw/openclaw-debugging`.
+
+The `Import` page also includes agentskill.sh search. The `Top Skills` page shows the top 100 agentskill.sh skills with sortable quality, security, and GitHub stars columns.
+
+V0 still stores and installs only `SKILL.md`; additional files returned by external registries are ignored until full skill-folder support is added.
+
 ## Default Skills
 
 Fresh installs seed useful starter skills under the `admin` namespace:
@@ -96,6 +116,7 @@ Current context:
 - Phase 1 implementation is in place as one `skillsdex` binary.
 - The default starter skill library is seeded into the `admin` namespace.
 - The web UI has been redesigned for clearer navigation, denser skill browsing, better install guidance, and light/dark themes.
+- GitHub and agentskill.sh imports are available in the web app, including agentskill.sh search and Top 100 browsing.
 - The CLI install/sync loop is the core product path and should stay the main polish target.
 
 Near-term plan:
@@ -107,6 +128,13 @@ Near-term plan:
 5. Only after the install/sync loop is polished, revisit phase 2 items such as teams, GitHub export, and additional agent targets.
 
 ## Checks
+
+```bash
+task test
+task build
+```
+
+Equivalent Go commands:
 
 ```bash
 go test ./...
