@@ -653,8 +653,9 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, u *User, title stri
 	data := struct {
 		Title string
 		User  *User
+		Path  string
 		Body  template.HTML
-	}{Title: title, User: u, Body: body}
+	}{Title: title, User: u, Path: r.URL.Path, Body: body}
 	t := template.Must(template.New("layout").Parse(layoutTmpl))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := t.Execute(w, data); err != nil {
@@ -662,22 +663,49 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, u *User, title stri
 	}
 }
 
+func icon(name string) string {
+	icons := map[string]string{
+		"archive": `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18M5 7l1 13h12l1-13M9 11h6M5 4h14v3H5z"/></svg>`,
+		"book":    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/></svg>`,
+		"bolt":    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 2-9 13h8l-1 7 9-13h-8z"/></svg>`,
+		"code":    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 9-4 3 4 3M16 9l4 3-4 3M14 4l-4 16"/></svg>`,
+		"edit":    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>`,
+		"help":    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.1 9a3 3 0 1 1 5.8 1c-.8 1.3-2.9 1.4-2.9 4M12 18h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>`,
+		"import":  `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M8 11l4 4 4-4M4 17v3h16v-3"/></svg>`,
+		"key":     `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 7a5 5 0 1 0-3.5 8.5L14 18h2v2h2v2h3v-3l-6.5-6.5A5 5 0 0 0 15 7z"/></svg>`,
+		"logout":  `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>`,
+		"plus":    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
+		"search":  `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.3-4.3M10 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16z"/></svg>`,
+		"spark":   `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.7 5.2L19 10l-5.3 1.8L12 17l-1.7-5.2L5 10l5.3-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>`,
+		"sun":     `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4M17 12a5 5 0 1 1-10 0 5 5 0 0 1 10 0z"/></svg>`,
+		"users":   `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg>`,
+	}
+	if v, ok := icons[name]; ok {
+		return `<span class="icon">` + v + `</span>`
+	}
+	return ""
+}
+
+func iconLabel(name, text string) string {
+	return icon(name) + `<span>` + html.EscapeString(text) + `</span>`
+}
+
 func loginForm(msg string) template.HTML {
 	var b strings.Builder
+	b.WriteString(`<section class="login-shell"><div class="login-brand"><div class="product-lockup"><div class="mark">SD</div><div><p class="eyebrow">Private skill library</p><h1>SkillsDex</h1></div></div><p>Curate reusable agent skills, keep revisions visible, and install the right guidance into Codex from one local control room.</p><div class="login-graphic" aria-hidden="true"><div class="stack-card primary"><span>admin/code-review</span><strong>r4</strong></div><div class="stack-card"><span>admin/test-strategy</span><strong>r2</strong></div><div class="stack-card muted-card"><span>sync target</span><strong>codex</strong></div></div></div><form class="panel login-panel" method="post" action="/login"><div class="panel-head"><div class="panel-icon">` + icon("key") + `</div><div><h2>Log in</h2><p>Use a local SkillsDex account.</p></div></div>`)
 	if msg != "" {
 		b.WriteString(`<p class="flash">` + html.EscapeString(msg) + `</p>`)
 	}
-	b.WriteString(`<section class="login-shell"><div class="login-brand"><div class="mark">SD</div><h1>SkillsDex</h1><p>Private Codex skills, versioned and ready to install.</p></div><form class="panel login-panel" method="post" action="/login">
-		<label>Username <input name="username" autocomplete="username" required autofocus></label>
+	b.WriteString(`<label>Username <input name="username" autocomplete="username" required autofocus></label>
 		<label>Password <input name="password" type="password" autocomplete="current-password" required></label>
-		<button type="submit">Log in</button>
+		<button type="submit">` + iconLabel("key", "Log in") + `</button>
 	</form></section>`)
 	return template.HTML(b.String())
 }
 
 func usersPage(users []User, msg string) template.HTML {
 	var b strings.Builder
-	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Admin</p><h1>Users</h1></div></header><div class="split"><section class="surface">`)
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Admin</p><h1>Users</h1><p>Manage local accounts and administrative access.</p></div><div class="page-art users-art" aria-hidden="true">` + icon("users") + `</div></header><div class="split"><section class="surface">`)
 	if msg != "" {
 		b.WriteString(`<p class="flash">` + html.EscapeString(msg) + `</p>`)
 	}
@@ -691,14 +719,14 @@ func usersPage(users []User, msg string) template.HTML {
 		if u.IsAdmin {
 			role = "admin"
 		}
-		b.WriteString(`<tr><td><strong>` + html.EscapeString(u.Username) + `</strong></td><td>` + html.EscapeString(u.Email) + `</td><td><span class="pill">` + role + `</span></td><td><span class="pill ` + status + `">` + status + `</span></td><td><a href="/admin/users/` + html.EscapeString(u.ID) + `">Edit</a></td></tr>`)
+		b.WriteString(`<tr><td><div class="cell-title"><strong>` + html.EscapeString(u.Username) + `</strong></div></td><td>` + html.EscapeString(u.Email) + `</td><td><span class="pill">` + role + `</span></td><td><span class="pill ` + status + `">` + status + `</span></td><td><a class="table-action" href="/admin/users/` + html.EscapeString(u.ID) + `">` + iconLabel("edit", "Edit") + `</a></td></tr>`)
 	}
-	b.WriteString(`</tbody></table></section><section class="panel sticky"><h2>Create User</h2><form method="post" action="/admin/users">
+	b.WriteString(`</tbody></table></section><section class="panel sticky"><div class="panel-head"><div class="panel-icon">` + icon("users") + `</div><div><h2>Create User</h2><p>Add another operator account.</p></div></div><form method="post" action="/admin/users">
 		<label>Username <input name="username" required pattern="[a-z0-9][a-z0-9-]{0,62}"></label>
 		<label>Email <input name="email" type="email"></label>
 		<label>Password <input name="password" type="password" required></label>
 		<label class="check"><input name="is_admin" type="checkbox"> Admin</label>
-		<button type="submit">Create</button>
+		<button type="submit">` + iconLabel("plus", "Create") + `</button>
 	</form></section></div>`)
 	return template.HTML(b.String())
 }
@@ -721,13 +749,13 @@ func userEditPage(u *User, msg string) template.HTML {
 	if u.DeactivatedAt != nil {
 		b.WriteString(` checked`)
 	}
-	b.WriteString(`> Deactivated</label><button type="submit">Save</button></form></section>`)
+	b.WriteString(`> Deactivated</label><button type="submit">` + iconLabel("edit", "Save") + `</button></form></section>`)
 	return template.HTML(b.String())
 }
 
 func tokensPage(tokens []APIToken, msg string) template.HTML {
 	var b strings.Builder
-	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">CLI access</p><h1>API Tokens</h1></div></header><div class="split"><section class="surface">`)
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">CLI access</p><h1>API Tokens</h1><p>Issue scoped tokens for the local SkillsDex CLI.</p></div><div class="page-art key-art" aria-hidden="true">` + icon("key") + `</div></header><div class="split"><section class="surface">`)
 	if msg != "" {
 		b.WriteString(`<p class="flash">` + html.EscapeString(msg) + `</p>`)
 	}
@@ -740,14 +768,14 @@ func tokensPage(tokens []APIToken, msg string) template.HTML {
 		if t.RevokedAt != "" {
 			status = "revoked"
 		}
-		b.WriteString(`<tr><td><strong>` + html.EscapeString(t.Name) + `</strong></td><td class="token-cell"><code>` + html.EscapeString(t.Token) + `</code></td><td>` + t.CreatedAt.Format("2006-01-02 15:04") + `</td><td>` + html.EscapeString(t.LastUsedAt) + `</td><td><span class="pill ` + status + `">` + status + `</span></td><td>`)
+		b.WriteString(`<tr><td><div class="cell-title"><strong>` + html.EscapeString(t.Name) + `</strong></div></td><td class="token-cell"><code>` + html.EscapeString(t.Token) + `</code></td><td>` + t.CreatedAt.Format("2006-01-02 15:04") + `</td><td>` + html.EscapeString(t.LastUsedAt) + `</td><td><span class="pill ` + status + `">` + status + `</span></td><td>`)
 		if t.RevokedAt == "" {
 			b.WriteString(`<form method="post" action="/tokens/` + html.EscapeString(t.ID) + `/revoke"><button class="link danger" type="submit">Revoke</button></form>`)
 		}
 		b.WriteString(`</td></tr>`)
 	}
-	b.WriteString(`</tbody></table></section><aside class="panel sticky"><h2>New Token</h2><form method="post" action="/tokens">
-		<label>Name <input name="name" value="local cli"></label><button type="submit">Generate</button>
+	b.WriteString(`</tbody></table></section><aside class="panel sticky"><div class="panel-head"><div class="panel-icon">` + icon("key") + `</div><div><h2>New Token</h2><p>Create credentials for ` + "`skillsdex login`" + `.</p></div></div><form method="post" action="/tokens">
+		<label>Name <input name="name" value="local cli"></label><button type="submit">` + iconLabel("plus", "Generate") + `</button>
 	</form><div class="command-card"><span>CLI login</span><pre>skillsdex login --server http://127.0.0.1:8765 --token &lt;token&gt;</pre></div></aside></div>`)
 	return template.HTML(b.String())
 }
@@ -763,15 +791,15 @@ func skillsPage(skills []Skill, archived bool) template.HTML {
 			active++
 		}
 	}
-	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Library</p><h1>Skills</h1><div class="metrics"><span><strong>` + fmt.Sprintf("%d", active) + `</strong> active</span><span><strong>` + fmt.Sprintf("%d", archivedCount) + `</strong> archived</span></div></div><div class="actions"><a class="button" href="/skills/new">New Skill</a> `)
-	b.WriteString(`<a class="button secondary" href="/skills/import">Import</a> `)
-	b.WriteString(`<a class="button secondary" href="/skills/top">Top Skills</a> `)
+	b.WriteString(`<header class="pagehead hero-head"><div><p class="eyebrow">Library</p><h1>Skills</h1><p>Browse, import, revise, and install reusable agent workflows.</p><div class="metrics"><span><strong>` + fmt.Sprintf("%d", active) + `</strong> active</span><span><strong>` + fmt.Sprintf("%d", archivedCount) + `</strong> archived</span></div></div><div class="actions"><a class="button" href="/skills/new">` + iconLabel("plus", "New Skill") + `</a> `)
+	b.WriteString(`<a class="button secondary" href="/skills/import">` + iconLabel("import", "Import") + `</a> `)
+	b.WriteString(`<a class="button secondary" href="/skills/top">` + iconLabel("spark", "Top Skills") + `</a> `)
 	if archived {
-		b.WriteString(`<a href="/skills">Hide archived</a>`)
+		b.WriteString(`<a class="button ghost" href="/skills">Hide archived</a>`)
 	} else {
-		b.WriteString(`<a href="/skills?archived=1">Show archived</a>`)
+		b.WriteString(`<a class="button ghost" href="/skills?archived=1">` + iconLabel("archive", "Show archived") + `</a>`)
 	}
-	b.WriteString(`</div></header><div class="split wide"><section class="surface"><table><thead><tr><th>Identifier</th><th>Name</th><th>Revision</th><th>Updated</th><th>Status</th></tr></thead><tbody>`)
+	b.WriteString(`</div><div class="page-art skills-art" aria-hidden="true"><span class="art-node">SKILL.md</span><span class="art-node">sync</span><span class="art-node">codex</span></div></header><div class="split wide"><section class="surface data-surface"><table><thead><tr><th>Identifier</th><th>Name</th><th>Revision</th><th>Updated</th><th>Status</th></tr></thead><tbody>`)
 	if len(skills) == 0 {
 		b.WriteString(`<tr><td colspan="5"><div class="empty"><strong>No skills yet.</strong><br><a href="/skills/new">Create the first skill</a></div></td></tr>`)
 	}
@@ -781,13 +809,13 @@ func skillsPage(skills []Skill, archived bool) template.HTML {
 			status = "archived"
 		}
 		id := s.OwnerSlug + "/" + s.Slug
-		b.WriteString(`<tr><td><a class="identifier" href="/skills/` + html.EscapeString(id) + `">` + html.EscapeString(id) + `</a></td><td><strong>` + html.EscapeString(s.Name) + `</strong><div class="muted">` + html.EscapeString(s.ShortDescription) + `</div>`)
+		b.WriteString(`<tr><td><a class="identifier" href="/skills/` + html.EscapeString(id) + `">` + html.EscapeString(id) + `</a></td><td><div class="cell-title"><strong>` + html.EscapeString(s.Name) + `</strong><div class="muted">` + html.EscapeString(s.ShortDescription) + `</div></div>`)
 		if s.RecommendedDefault {
 			b.WriteString(`<div class="row-tags"><span class="pill active">recommended</span></div>`)
 		}
 		b.WriteString(`</td><td><span class="rev">r` + fmt.Sprintf("%d", s.RevisionNumber) + `</span></td><td>` + s.UpdatedAt.Format("2006-01-02 15:04") + `</td><td><span class="pill ` + status + `">` + status + `</span></td></tr>`)
 	}
-	b.WriteString(`</tbody></table></section><aside class="panel sticky"><h2>Install Starter Skills</h2><div class="command-card"><span>Recommended defaults</span><pre>skillsdex install-defaults --target codex</pre></div><div class="command-card"><span>Single skill</span><pre>skillsdex install admin/five-advisor-review --target codex</pre></div><div class="command-card"><span>Sync managed installs</span><pre>skillsdex sync</pre></div></aside></div>`)
+	b.WriteString(`</tbody></table></section><aside class="panel sticky"><div class="panel-head"><div class="panel-icon">` + icon("bolt") + `</div><div><h2>Install Starter Skills</h2><p>Run the CLI from this machine after login.</p></div></div><div class="command-card"><span>Recommended defaults</span><pre>skillsdex install-defaults --target codex</pre></div><div class="command-card"><span>Single skill</span><pre>skillsdex install admin/five-advisor-review --target codex</pre></div><div class="command-card"><span>Sync managed installs</span><pre>skillsdex sync</pre></div></aside></div>`)
 	return template.HTML(b.String())
 }
 
@@ -799,9 +827,9 @@ type skillImportResult struct {
 
 func skillImportPage(source, msg string, results []skillImportResult, searchQuery string, search agentSkillSearchResponse, searchMsg string) template.HTML {
 	var b strings.Builder
-	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Import</p><h1>Source</h1></div></header><div class="split"><section class="panel"><form method="post" action="/skills/import">
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Import</p><h1>Source</h1><p>Pull a Codex-compatible SKILL.md into your private library.</p></div><div class="page-art import-art" aria-hidden="true">` + icon("import") + `</div></header><div class="split"><section class="panel"><form method="post" action="/skills/import">
 		<label>Source <input name="source_url" value="` + html.EscapeString(source) + `" placeholder="https://github.com/DannyMac180/skills or https://agentskill.sh/@openclaw/openclaw-debugging" required autofocus></label>
-		<div class="actions"><button type="submit">Import</button><a class="button secondary" href="/skills">Cancel</a></div>
+		<div class="actions"><button type="submit">` + iconLabel("import", "Import") + `</button><a class="button secondary" href="/skills">Cancel</a></div>
 	</form>`)
 	if msg != "" {
 		b.WriteString(`<p class="flash">` + html.EscapeString(msg) + `</p>`)
@@ -817,9 +845,9 @@ func skillImportPage(source, msg string, results []skillImportResult, searchQuer
 		}
 		b.WriteString(`</tbody></table>`)
 	}
-	b.WriteString(`<section class="search-block"><h2>Search agentskill.sh</h2><form method="get" action="/skills/import" class="inline-search">
+	b.WriteString(`<section class="search-block"><div class="panel-head compact"><div class="panel-icon">` + icon("search") + `</div><div><h2>Search agentskill.sh</h2><p>Find public skills by topic.</p></div></div><form method="get" action="/skills/import" class="inline-search">
 		<label>Query <input name="q" value="` + html.EscapeString(searchQuery) + `" placeholder="code review, playwright, seo"></label>
-		<button type="submit">Search</button>
+		<button type="submit">` + iconLabel("search", "Search") + `</button>
 	</form>`)
 	if searchMsg != "" {
 		b.WriteString(`<p class="flash">` + html.EscapeString(searchMsg) + `</p>`)
@@ -832,13 +860,13 @@ func skillImportPage(source, msg string, results []skillImportResult, searchQuer
 		}
 	}
 	b.WriteString(`</section>`)
-	b.WriteString(`</section><aside class="panel sticky"><h2>Supported Sources</h2><div class="command-card"><span>GitHub repository</span><pre>https://github.com/owner/repo</pre></div><div class="command-card"><span>GitHub skill folder</span><pre>https://github.com/owner/repo/tree/main/skill-name</pre></div><div class="command-card"><span>agentskill.sh skill</span><pre>https://agentskill.sh/@owner/skill-name</pre></div><div class="command-card"><span>agentskill.sh /learn</span><pre>npx @agentskill.sh/cli@latest setup</pre></div><p><a href="https://agentskill.sh/" target="_blank" rel="noopener">Browse agentskill.sh</a> · <a href="https://agentskill.sh/install" target="_blank" rel="noopener">Install /learn</a></p></aside></div>`)
+	b.WriteString(`</section><aside class="panel sticky"><div class="panel-head"><div class="panel-icon">` + icon("book") + `</div><div><h2>Supported Sources</h2><p>Paste one of these source formats.</p></div></div><div class="command-card"><span>GitHub repository</span><pre>https://github.com/owner/repo</pre></div><div class="command-card"><span>GitHub skill folder</span><pre>https://github.com/owner/repo/tree/main/skill-name</pre></div><div class="command-card"><span>agentskill.sh skill</span><pre>https://agentskill.sh/@owner/skill-name</pre></div><div class="command-card"><span>agentskill.sh /learn</span><pre>npx @agentskill.sh/cli@latest setup</pre></div><p><a href="https://agentskill.sh/" target="_blank" rel="noopener">Browse agentskill.sh</a> · <a href="https://agentskill.sh/install" target="_blank" rel="noopener">Install /learn</a></p></aside></div>`)
 	return template.HTML(b.String())
 }
 
 func topSkillsPage(search agentSkillSearchResponse, msg string) template.HTML {
 	var b strings.Builder
-	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">agentskill.sh</p><h1>Top 100 Skills</h1><p>Ranked feed from agentskill.sh. Import saves the selected SKILL.md into your SkillsDex library.</p></div><div class="actions"><a class="button secondary" href="/skills/import">Import by URL</a><a class="button secondary" href="https://agentskill.sh/" target="_blank" rel="noopener">Browse agentskill.sh</a></div></header><section class="surface">`)
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">agentskill.sh</p><h1>Top 100 Skills</h1><p>Ranked feed from agentskill.sh. Import saves the selected SKILL.md into your SkillsDex library.</p></div><div class="actions"><a class="button secondary" href="/skills/import">` + iconLabel("import", "Import by URL") + `</a><a class="button secondary" href="https://agentskill.sh/" target="_blank" rel="noopener">Browse agentskill.sh</a></div><div class="page-art top-art" aria-hidden="true">` + icon("spark") + `</div></header><section class="surface data-surface">`)
 	if msg != "" {
 		b.WriteString(`<p class="flash">` + html.EscapeString(msg) + `</p>`)
 	}
@@ -853,8 +881,8 @@ func topSkillsPage(search agentSkillSearchResponse, msg string) template.HTML {
 
 func helpPage() template.HTML {
 	var b strings.Builder
-	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Reference</p><h1>Assistant Formats</h1><p>Choose the right shape for reusable agent guidance: portable skills, repo instructions, or editor-specific rules.</p></div><div class="actions"><a class="button" href="/skills/import">Import Skills</a><a class="button secondary" href="/skills/top">Top Skills</a></div></header>`)
-	b.WriteString(`<section class="help-intent-grid" aria-label="Format guidance"><article class="panel help-principle"><span>Most portable</span><strong>Use <code>SKILL.md</code></strong><p>Package repeatable workflows as a skill directory with a clear description and focused instructions.</p></article><article class="panel help-principle"><span>Always visible</span><strong>Use repo guidance</strong><p>Keep broad project policy in files such as <code>AGENTS.md</code> or <code>CLAUDE.md</code>.</p></article><article class="panel help-principle"><span>File scoped</span><strong>Use editor rules</strong><p>Use Cursor rules when guidance should attach by glob, folder, or explicit mention.</p></article></section>`)
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Reference</p><h1>Assistant Formats</h1><p>Choose the right shape for reusable agent guidance: portable skills, repo instructions, or editor-specific rules.</p></div><div class="actions"><a class="button" href="/skills/import">` + iconLabel("import", "Import Skills") + `</a><a class="button secondary" href="/skills/top">` + iconLabel("spark", "Top Skills") + `</a></div><div class="page-art help-art" aria-hidden="true">` + icon("help") + `</div></header>`)
+	b.WriteString(`<section class="help-intent-grid" aria-label="Format guidance"><article class="panel help-principle"><div class="panel-icon">` + icon("book") + `</div><span>Most portable</span><strong>Use <code>SKILL.md</code></strong><p>Package repeatable workflows as a skill directory with a clear description and focused instructions.</p></article><article class="panel help-principle"><div class="panel-icon">` + icon("code") + `</div><span>Always visible</span><strong>Use repo guidance</strong><p>Keep broad project policy in files such as <code>AGENTS.md</code> or <code>CLAUDE.md</code>.</p></article><article class="panel help-principle"><div class="panel-icon">` + icon("spark") + `</div><span>File scoped</span><strong>Use editor rules</strong><p>Use Cursor rules when guidance should attach by glob, folder, or explicit mention.</p></article></section>`)
 	b.WriteString(`<section class="help-cards" aria-label="Tool format comparison">`)
 	rows := []struct {
 		tool       string
@@ -924,7 +952,7 @@ func agentSkillResultsTable(results []agentSkillSearchResult) string {
 	b.WriteString(`<table class="result-table sortable" data-sort-table><thead><tr><th><button class="sort-head" type="button" data-sort="text">Skill</button></th><th><button class="sort-head" type="button" data-sort="number">Quality</button></th><th><button class="sort-head" type="button" data-sort="number">Security</button></th><th><button class="sort-head" type="button" data-sort="number">GitHub Stars</button></th><th></th></tr></thead><tbody>`)
 	for _, result := range results {
 		slug := html.EscapeString(result.Slug)
-		b.WriteString(`<tr><td data-sort-value="` + html.EscapeString(result.Name) + `"><a class="identifier" href="https://agentskill.sh/@` + slug + `" target="_blank" rel="noopener">` + slug + `</a><div><strong>` + html.EscapeString(result.Name) + `</strong></div><div class="muted">` + html.EscapeString(result.Description) + `</div></td><td data-sort-value="` + scoreSortValue(result.ContentQualityScore) + `">` + scoreLabel(result.ContentQualityScore) + `</td><td data-sort-value="` + scoreSortValue(result.SecurityScore) + `">` + scoreLabel(result.SecurityScore) + `</td><td data-sort-value="` + fmt.Sprintf("%d", result.GitHubStars) + `">` + fmt.Sprintf("%d", result.GitHubStars) + `</td><td><form method="post" action="/skills/import"><input type="hidden" name="source_url" value="@` + slug + `"><button type="submit">Import</button></form></td></tr>`)
+		b.WriteString(`<tr><td data-sort-value="` + html.EscapeString(result.Name) + `"><a class="identifier" href="https://agentskill.sh/@` + slug + `" target="_blank" rel="noopener">` + slug + `</a><div class="cell-title"><strong>` + html.EscapeString(result.Name) + `</strong><div class="muted">` + html.EscapeString(result.Description) + `</div></div></td><td data-sort-value="` + scoreSortValue(result.ContentQualityScore) + `">` + scoreLabel(result.ContentQualityScore) + `</td><td data-sort-value="` + scoreSortValue(result.SecurityScore) + `">` + scoreLabel(result.SecurityScore) + `</td><td data-sort-value="` + fmt.Sprintf("%d", result.GitHubStars) + `">` + fmt.Sprintf("%d", result.GitHubStars) + `</td><td><form method="post" action="/skills/import"><input type="hidden" name="source_url" value="@` + slug + `"><button type="submit">` + iconLabel("import", "Import") + `</button></form></td></tr>`)
 	}
 	b.WriteString(`</tbody></table>`)
 	return b.String()
@@ -957,7 +985,7 @@ func skillFormPage(action string, create bool, in SkillInput, msg string) templa
 		title = "New Skill"
 	}
 	preview := renderSkillMarkdown(in)
-	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Editor</p><h1>` + title + `</h1></div></header>`)
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Editor</p><h1>` + title + `</h1><p>Shape the stored SKILL.md frontmatter and body.</p></div><div class="page-art editor-art" aria-hidden="true">` + icon("edit") + `</div></header>`)
 	if msg != "" {
 		b.WriteString(`<p class="flash">` + html.EscapeString(msg) + `</p>`)
 	}
@@ -979,7 +1007,7 @@ func skillFormPage(action string, create bool, in SkillInput, msg string) templa
 	}
 	b.WriteString(`> Recommended default</label>
 		<label>Markdown body <textarea name="body" rows="20" required>` + html.EscapeString(in.Body) + `</textarea></label>
-		<div class="actions"><button name="action" value="save" type="submit">Save Revision</button><button class="secondary" name="action" value="preview" type="submit">Preview</button></div></section><aside class="panel preview-pane"><h2>Generated SKILL.md</h2><pre class="raw">` + html.EscapeString(preview) + `</pre><h2>Rendered Preview</h2><div class="rendered mini">` + simpleMarkdownHTML(in.Body) + `</div></aside></form>`)
+		<div class="actions"><button name="action" value="save" type="submit">` + iconLabel("edit", "Save Revision") + `</button><button class="secondary" name="action" value="preview" type="submit">Preview</button></div></section><aside class="panel preview-pane"><div class="panel-head"><div class="panel-icon">` + icon("code") + `</div><div><h2>Generated SKILL.md</h2><p>What will be stored for this revision.</p></div></div><pre class="raw">` + html.EscapeString(preview) + `</pre><h2>Rendered Preview</h2><div class="rendered mini">` + simpleMarkdownHTML(in.Body) + `</div></aside></form>`)
 	return template.HTML(b.String())
 }
 
@@ -987,26 +1015,26 @@ func skillDetailPage(s *Skill, raw string) template.HTML {
 	id := s.OwnerSlug + "/" + s.Slug
 	var b strings.Builder
 	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Skill</p><h1>` + html.EscapeString(id) + `</h1><p>` + html.EscapeString(s.Description) + `</p><div class="metrics"><span><strong>r` + fmt.Sprintf("%d", s.RevisionNumber) + `</strong> latest</span><span><strong>` + s.UpdatedAt.Format("Jan 2") + `</strong> updated</span></div></div><div class="actions">
-		<a class="button" href="/skills/` + html.EscapeString(id) + `/edit">Edit</a>
-		<a class="button secondary" href="/skills/` + html.EscapeString(id) + `/raw">Raw</a>
-		<a class="button secondary" href="/skills/` + html.EscapeString(id) + `/revisions">Revisions</a></div></header>`)
+		<a class="button" href="/skills/` + html.EscapeString(id) + `/edit">` + iconLabel("edit", "Edit") + `</a>
+		<a class="button secondary" href="/skills/` + html.EscapeString(id) + `/raw">` + iconLabel("code", "Raw") + `</a>
+		<a class="button secondary" href="/skills/` + html.EscapeString(id) + `/revisions">Revisions</a></div><div class="page-art skill-art" aria-hidden="true">` + icon("book") + `</div></header>`)
 	if s.ArchivedAt != "" {
 		b.WriteString(`<p class="flash">This skill is archived.</p>`)
 	} else {
-		b.WriteString(`<form method="post" action="/skills/` + html.EscapeString(id) + `/archive"><button class="link danger" type="submit">Archive skill</button></form>`)
+		b.WriteString(`<form class="inline-danger" method="post" action="/skills/` + html.EscapeString(id) + `/archive"><button class="link danger" type="submit">` + iconLabel("archive", "Archive skill") + `</button></form>`)
 	}
 	recommended := "no"
 	if s.RecommendedDefault {
 		recommended = "yes"
 	}
-	b.WriteString(`<div class="split wide"><section class="rendered">` + simpleMarkdownHTML(bodyFromSkillMarkdown(raw)) + `</section><aside class="panel sticky"><h2>Install</h2><div class="command-card"><span>Codex</span><pre>skillsdex install ` + html.EscapeString(id) + ` --target codex</pre></div><div class="meta-list"><div><span>Name</span><strong>` + html.EscapeString(s.Name) + `</strong></div><div><span>Short description</span><strong>` + html.EscapeString(s.ShortDescription) + `</strong></div><div><span>Recommended default</span><strong>` + recommended + `</strong></div></div></aside></div>`)
+	b.WriteString(`<div class="split wide"><section class="rendered">` + simpleMarkdownHTML(bodyFromSkillMarkdown(raw)) + `</section><aside class="panel sticky"><div class="panel-head"><div class="panel-icon">` + icon("bolt") + `</div><div><h2>Install</h2><p>Copy this skill into the managed Codex target.</p></div></div><div class="command-card"><span>Codex</span><pre>skillsdex install ` + html.EscapeString(id) + ` --target codex</pre></div><div class="meta-list"><div><span>Name</span><strong>` + html.EscapeString(s.Name) + `</strong></div><div><span>Short description</span><strong>` + html.EscapeString(s.ShortDescription) + `</strong></div><div><span>Recommended default</span><strong>` + recommended + `</strong></div></div></aside></div>`)
 	return template.HTML(b.String())
 }
 
 func revisionsPage(owner, slug string, revs []SkillRevision) template.HTML {
 	id := owner + "/" + slug
 	var b strings.Builder
-	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">History</p><h1>Revisions for ` + html.EscapeString(id) + `</h1></div></header><section class="surface"><table><thead><tr><th>Revision</th><th>Created</th><th>Hash</th><th></th></tr></thead><tbody>`)
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">History</p><h1>Revisions for ` + html.EscapeString(id) + `</h1></div><div class="page-art history-art" aria-hidden="true">` + icon("archive") + `</div></header><section class="surface data-surface"><table><thead><tr><th>Revision</th><th>Created</th><th>Hash</th><th></th></tr></thead><tbody>`)
 	for _, r := range revs {
 		b.WriteString(`<tr><td><span class="rev">r` + fmt.Sprintf("%d", r.RevisionNumber) + `</span></td><td>` + r.CreatedAt.Format("2006-01-02 15:04") + `</td><td><code>` + html.EscapeString(r.TreeHash) + `</code></td><td><a href="/skills/` + html.EscapeString(id) + `/revisions/` + html.EscapeString(r.ID) + `">View diff</a></td></tr>`)
 	}
@@ -1023,7 +1051,7 @@ func revisionPage(s *Skill, rev SkillRevision, raw, diff string) template.HTML {
 	return template.HTML(b.String())
 }
 
-const layoutTmpl = `<!doctype html>
+var layoutTmpl = `<!doctype html>
 <html lang="en">
 <head>
 	<meta charset="utf-8">
@@ -1046,14 +1074,14 @@ const layoutTmpl = `<!doctype html>
 			<a class="brand" href="/skills"><span class="brand-mark">SD</span><span>SkillsDex</span></a>
 			{{if .User}}
 			<div class="nav-links">
-				<a href="/skills">Skills</a>
-				<a href="/skills/top">Top Skills</a>
-				<a href="/help">Help</a>
-				<a href="/tokens">API Tokens</a>
-				{{if .User.IsAdmin}}<a href="/admin/users">Users</a>{{end}}
+				<a href="/skills" data-nav="/skills">` + iconLabel("book", "Skills") + `</a>
+				<a href="/skills/top" data-nav="/skills/top">` + iconLabel("spark", "Top Skills") + `</a>
+				<a href="/help" data-nav="/help">` + iconLabel("help", "Help") + `</a>
+				<a href="/tokens" data-nav="/tokens">` + iconLabel("key", "API Tokens") + `</a>
+				{{if .User.IsAdmin}}<a href="/admin/users" data-nav="/admin/users">` + iconLabel("users", "Users") + `</a>{{end}}
 			</div>
-			<button class="theme-toggle" type="button" aria-label="Toggle color theme" data-theme-toggle>Theme</button>
-			<form method="post" action="/logout"><button class="link" type="submit">Logout {{.User.Username}}</button></form>
+			<button class="theme-toggle icon-button" type="button" aria-label="Toggle color theme" data-theme-toggle>` + icon("sun") + `<span class="button-label">Theme</span></button>
+			<form method="post" action="/logout"><button class="link nav-logout" type="submit">` + icon("logout") + `<span class="button-label">Logout {{.User.Username}}</span></button></form>
 			{{end}}
 		</nav>
 		<main>{{.Body}}</main>
@@ -1064,7 +1092,8 @@ const layoutTmpl = `<!doctype html>
 		if (!button) return;
 		function apply(theme) {
 			document.documentElement.dataset.theme = theme;
-			button.textContent = theme === "dark" ? "Light" : "Dark";
+			var label = button.querySelector(".button-label");
+			if (label) label.textContent = theme === "dark" ? "Light" : "Dark";
 			button.setAttribute("aria-label", "Switch to " + (theme === "dark" ? "light" : "dark") + " theme");
 		}
 		var current = document.documentElement.dataset.theme || "light";
@@ -1073,6 +1102,16 @@ const layoutTmpl = `<!doctype html>
 			var next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
 			try { localStorage.setItem("skillsdex-theme", next); } catch (e) {}
 			apply(next);
+		});
+	})();
+	(function() {
+		var path = window.location.pathname;
+		document.querySelectorAll("[data-nav]").forEach(function(link) {
+			var target = link.getAttribute("data-nav");
+			if (target === "/skills" && path.indexOf("/skills/top") === 0) return;
+			if (path === target || (target !== "/skills" && path.indexOf(target + "/") === 0) || (target === "/skills" && path.indexOf("/skills") === 0)) {
+				link.setAttribute("aria-current", "page");
+			}
 		});
 	})();
 	(function() {
@@ -1111,54 +1150,59 @@ const layoutTmpl = `<!doctype html>
 </html>`
 
 const css = `
-:root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1d232b; background: #eef1f4; --bg: #eef1f4; --surface: #ffffff; --surface-2: #f8fafb; --line: #d8dee5; --text: #1d232b; --muted: #66717d; --accent: #1f6f78; --accent-strong: #15545b; --danger: #a33838; --ok: #237a4d; --warn: #9a6a16; --nav: rgba(255,255,255,.92); --nav-link: #315365; --nav-hover: #edf7f8; --row-hover: #fbfcfd; --field: #ffffff; --field-border: #c7d0d8; --soft: #f3f6f7; --soft-border: #dfe6ea; --code-bg: #111820; --code-text: #f8fafc; --shadow: rgba(22,30,38,.04); --focus: rgba(31,111,120,.22); --warning-bg: #fff7e6; --warning-line: #ecd39a; --warning-text: #6f4c0b; --ok-bg: #eef8f2; --ok-line: #cce8d7; }
-:root[data-theme="dark"] { color-scheme: dark; color: #e6edf3; background: #11161c; --bg: #11161c; --surface: #171e26; --surface-2: #1d2630; --line: #303b47; --text: #e6edf3; --muted: #9aa7b4; --accent: #2f9aa6; --accent-strong: #6bc8d1; --danger: #ff8b8b; --ok: #79d49c; --warn: #e6bd6a; --nav: rgba(23,30,38,.92); --nav-link: #bdd7dc; --nav-hover: #20323a; --row-hover: #1c2530; --field: #10161d; --field-border: #3a4652; --soft: #202a33; --soft-border: #35414d; --code-bg: #0b1016; --code-text: #e8eef5; --shadow: rgba(0,0,0,.22); --focus: rgba(47,154,166,.34); --warning-bg: #332716; --warning-line: #6b5224; --warning-text: #f0cf86; --ok-bg: #173025; --ok-line: #2f6048; }
+:root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1f252c; background: #eceff1; --bg: #eceff1; --bg-grid: rgba(44,56,65,.08); --surface: #ffffff; --surface-2: #f7f8f7; --surface-3: #eef3f2; --line: #d6dde2; --text: #1f252c; --muted: #66717a; --accent: #1f6f78; --accent-strong: #174f56; --accent-ink: #0f3439; --clay: #a05a3c; --clay-soft: #fff1ea; --gold: #a06f10; --danger: #a33838; --ok: #237a4d; --warn: #9a6a16; --nav: rgba(255,255,255,.88); --nav-link: #334c57; --nav-hover: #e9f3f4; --row-hover: #f8fbfb; --field: #ffffff; --field-border: #c4cdd4; --soft: #f1f5f4; --soft-border: #dce5e4; --code-bg: #101820; --code-text: #f6f8fa; --shadow: rgba(30,39,46,.10); --shadow-soft: rgba(30,39,46,.05); --focus: rgba(31,111,120,.24); --warning-bg: #fff7e6; --warning-line: #ecd39a; --warning-text: #6f4c0b; --ok-bg: #eef8f2; --ok-line: #cce8d7; }
+:root[data-theme="dark"] { color-scheme: dark; color: #e8edf1; background: #101418; --bg: #101418; --bg-grid: rgba(209,220,224,.07); --surface: #171d23; --surface-2: #1e252c; --surface-3: #202c30; --line: #303a43; --text: #e8edf1; --muted: #9da9b3; --accent: #44a7ad; --accent-strong: #86d4d9; --accent-ink: #c9f2f3; --clay: #e49a7b; --clay-soft: #2c211d; --gold: #e0bd62; --danger: #ff8b8b; --ok: #79d49c; --warn: #e6bd6a; --nav: rgba(20,26,31,.90); --nav-link: #c5d7da; --nav-hover: #213137; --row-hover: #1c252b; --field: #10161b; --field-border: #3a4650; --soft: #202a31; --soft-border: #35424b; --code-bg: #090e13; --code-text: #e8eef5; --shadow: rgba(0,0,0,.30); --shadow-soft: rgba(0,0,0,.18); --focus: rgba(68,167,173,.32); --warning-bg: #332716; --warning-line: #6b5224; --warning-text: #f0cf86; --ok-bg: #173025; --ok-line: #2f6048; }
 * { box-sizing: border-box; }
-body { margin: 0; min-height: 100vh; background: var(--bg); }
+body { margin: 0; min-height: 100vh; background: var(--bg); background-image: linear-gradient(var(--bg-grid) 1px, transparent 1px), linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px); background-size: 28px 28px; }
 .app-shell { min-height: 100vh; }
-nav { min-height: 64px; display: flex; align-items: center; gap: 22px; padding: 0 28px; background: var(--nav); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px); }
+nav { min-height: 66px; display: flex; align-items: center; gap: 18px; padding: 0 28px; background: var(--nav); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 10; backdrop-filter: blur(14px); box-shadow: 0 1px 0 rgba(255,255,255,.35); }
 nav a { color: var(--nav-link); text-decoration: none; font-weight: 700; }
 nav a:hover { color: var(--accent-strong); }
 nav form { margin-left: auto; }
 .nav-links { display: flex; align-items: center; gap: 6px; }
-.nav-links a { padding: 8px 10px; border-radius: 6px; }
+.nav-links a { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 8px 10px; border-radius: 7px; }
 .nav-links a:hover { background: var(--nav-hover); }
+.nav-links a[aria-current="page"] { background: var(--accent-ink); color: #fff; }
+:root[data-theme="dark"] .nav-links a[aria-current="page"] { background: var(--accent); color: #071114; }
 .brand { color: var(--text); font-size: 18px; display: inline-flex; align-items: center; gap: 10px; margin-right: 6px; }
-.brand-mark, .mark { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; background: #173f46; color: #fff; font-weight: 800; letter-spacing: 0; }
-main { max-width: 1240px; margin: 0 auto; padding: 30px; }
-h1 { font-size: 30px; line-height: 1.15; margin: 0 0 10px; letter-spacing: 0; }
+.brand-mark, .mark { display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; background: var(--accent-ink); color: #fff; font-weight: 850; letter-spacing: 0; box-shadow: inset 0 0 0 1px rgba(255,255,255,.16), 0 8px 18px var(--shadow-soft); }
+main { max-width: 1260px; margin: 0 auto; padding: 32px; }
+h1 { font-size: 32px; line-height: 1.12; margin: 0 0 10px; letter-spacing: 0; }
 h2 { font-size: 18px; margin: 0 0 14px; letter-spacing: 0; }
 p { line-height: 1.55; }
 a { color: var(--accent-strong); }
 table { width: 100%; border-collapse: collapse; background: var(--surface); }
-th, td { text-align: left; padding: 14px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th, td { text-align: left; padding: 15px 16px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 th { font-size: 11px; text-transform: uppercase; color: var(--muted); background: var(--surface-2); letter-spacing: .04em; }
 tr:hover td { background: var(--row-hover); }
 tbody tr:last-child td { border-bottom: 0; }
 code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 pre { white-space: pre-wrap; overflow: auto; }
-.surface, .panel, .rendered { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 1px 2px var(--shadow); overflow: hidden; }
-.panel { padding: 20px; overflow: visible; }
+.surface, .panel, .rendered { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 12px 32px var(--shadow-soft), 0 1px 2px var(--shadow); overflow: hidden; }
+.panel { padding: 22px; overflow: visible; }
+.data-surface { border-top: 3px solid var(--accent); }
 .narrow { max-width: 480px; margin: 42px auto; }
 .split { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 22px; align-items: start; }
 .split.wide { grid-template-columns: minmax(0, 1fr) 380px; }
 .sticky { position: sticky; top: 84px; }
-.pagehead { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 22px; }
+.pagehead { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 24px; padding: 24px; background: color-mix(in srgb, var(--surface) 86%, transparent); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 28px var(--shadow-soft); overflow: hidden; position: relative; }
 .pagehead p { margin: 0; color: var(--muted); max-width: 720px; }
 .eyebrow { font-size: 12px; font-weight: 800; text-transform: uppercase; color: var(--accent-strong) !important; letter-spacing: .08em; margin-bottom: 6px !important; }
 .metrics { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
-.metrics span { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 5px 9px; border-radius: 6px; background: var(--soft); border: 1px solid var(--soft-border); color: var(--muted); font-size: 13px; }
+.metrics span { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 5px 10px; border-radius: 7px; background: var(--soft); border: 1px solid var(--soft-border); color: var(--muted); font-size: 13px; }
 .metrics strong { color: var(--text); }
 form { margin: 0; }
 label { display: grid; gap: 7px; margin-bottom: 15px; font-weight: 700; color: var(--text); }
-input, textarea { width: 100%; border: 1px solid var(--field-border); border-radius: 6px; padding: 10px 11px; font: inherit; background: var(--field); color: var(--text); }
+input, textarea { width: 100%; border: 1px solid var(--field-border); border-radius: 7px; padding: 11px 12px; font: inherit; background: var(--field); color: var(--text); box-shadow: inset 0 1px 0 var(--shadow-soft); }
 input:focus, textarea:focus, button:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-color: var(--accent); }
 textarea { resize: vertical; }
-button, .button { display: inline-flex; align-items: center; justify-content: center; min-height: 38px; border: 1px solid var(--accent-strong); border-radius: 6px; background: var(--accent); color: #fff; padding: 8px 14px; font: inherit; font-weight: 800; text-decoration: none; cursor: pointer; }
+button, .button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 38px; border: 1px solid var(--accent-strong); border-radius: 7px; background: var(--accent); color: #fff; padding: 8px 14px; font: inherit; font-weight: 800; text-decoration: none; cursor: pointer; box-shadow: 0 1px 0 rgba(255,255,255,.16) inset; }
 button:hover, .button:hover { background: var(--accent-strong); color: #fff; }
 .secondary { background: var(--surface); color: var(--accent-strong); }
 .secondary:hover { background: var(--nav-hover); color: var(--accent-strong); }
-.link { border: 0; background: transparent; color: var(--nav-link); padding: 0; min-height: 0; font-weight: 750; }
+.ghost { background: transparent; color: var(--muted); border-color: var(--line); box-shadow: none; }
+.ghost:hover { background: var(--soft); color: var(--text); }
+.link { border: 0; background: transparent; color: var(--nav-link); padding: 0; min-height: 0; font-weight: 750; box-shadow: none; }
 .link:hover { background: transparent; color: var(--accent-strong); }
 .danger { color: var(--danger); }
 .check { display: flex; align-items: center; gap: 8px; }
@@ -1167,6 +1211,7 @@ button:hover, .button:hover { background: var(--accent-strong); color: #fff; }
 .theme-toggle { margin-left: auto; min-height: 34px; padding: 6px 10px; background: var(--surface); color: var(--text); border-color: var(--line); }
 .theme-toggle:hover { background: var(--nav-hover); color: var(--text); }
 .theme-toggle + form { margin-left: 0; }
+.nav-logout { display: inline-flex; align-items: center; gap: 7px; }
 .flash { background: var(--warning-bg); border: 1px solid var(--warning-line); padding: 11px 13px; border-radius: 6px; color: var(--warning-text); }
 .search-block { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
 .inline-search { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; margin-bottom: 14px; }
@@ -1192,13 +1237,13 @@ button:hover, .button:hover { background: var(--accent-strong); color: #fff; }
 code { background: var(--soft); border: 1px solid var(--soft-border); border-radius: 4px; padding: 1px 4px; }
 .sort-head { min-height: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: inherit; text-transform: inherit; letter-spacing: inherit; }
 .sort-head:hover { background: transparent; color: var(--accent-strong); }
-.sort-head::after { content: "↕"; margin-left: 5px; color: var(--muted); font-size: 10px; }
-.sort-head[aria-sort="ascending"]::after { content: "↑"; color: var(--accent-strong); }
-.sort-head[aria-sort="descending"]::after { content: "↓"; color: var(--accent-strong); }
+.sort-head::after { content: "sort"; margin-left: 5px; color: var(--muted); font-size: 9px; text-transform: none; }
+.sort-head[aria-sort="ascending"]::after { content: "asc"; color: var(--accent-strong); }
+.sort-head[aria-sort="descending"]::after { content: "desc"; color: var(--accent-strong); }
 .editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 500px); gap: 22px; align-items: start; }
 .preview-pane { max-height: calc(100vh - 112px); overflow: auto; }
 .raw { background: var(--code-bg); color: var(--code-text); border-radius: 6px; padding: 14px; border: 1px solid #263241; }
-.rendered { padding: 26px; overflow: visible; }
+.rendered { padding: 28px; overflow: visible; line-height: 1.62; }
 .rendered h1:first-child { margin-top: 0; }
 .mini { padding: 14px; }
 .muted { color: var(--muted); font-size: 13px; margin-top: 4px; }
@@ -1208,18 +1253,42 @@ code { background: var(--soft); border: 1px solid var(--soft-border); border-rad
 .pill.active { color: var(--ok); background: var(--ok-bg); border-color: var(--ok-line); }
 .pill.archived, .pill.revoked, .pill.deactivated { color: var(--warn); background: var(--warning-bg); border-color: var(--warning-line); }
 .token-cell code { display: block; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.empty { padding: 28px; text-align: center; color: var(--muted); }
+.empty { padding: 32px; text-align: center; color: var(--muted); }
 .command-card { display: grid; gap: 8px; margin-top: 14px; }
 .command-card span { color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
-.command-card pre { margin: 0; background: var(--code-bg); color: var(--code-text); border-radius: 6px; padding: 13px; border: 1px solid #263241; }
+.command-card pre { margin: 0; background: var(--code-bg); color: var(--code-text); border-radius: 7px; padding: 13px; border: 1px solid #263241; }
 .meta-list { display: grid; gap: 12px; margin-top: 18px; }
 .meta-list div { display: grid; gap: 4px; padding-top: 12px; border-top: 1px solid var(--line); }
 .meta-list span { color: var(--muted); font-size: 12px; text-transform: uppercase; font-weight: 800; letter-spacing: .06em; }
-.login-shell { min-height: calc(100vh - 120px); display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 34px; align-items: center; max-width: 960px; margin: 0 auto; }
-.login-brand h1 { font-size: 44px; margin-top: 18px; }
-.login-brand p { color: var(--muted); font-size: 18px; max-width: 460px; }
-.login-panel { padding: 24px; }
-.mark { width: 48px; height: 48px; border-radius: 10px; }
+.icon { display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; flex: 0 0 auto; }
+.icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.panel-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 18px; }
+.panel-head.compact { margin-bottom: 12px; }
+.panel-head h2, .panel-head p { margin: 0; }
+.panel-head p { color: var(--muted); font-size: 13px; }
+.panel-icon { width: 38px; height: 38px; border-radius: 8px; display: inline-grid; place-items: center; color: var(--accent-strong); background: var(--surface-3); border: 1px solid var(--soft-border); }
+.panel-icon .icon, .panel-icon svg { width: 19px; height: 19px; }
+.page-art { min-width: 118px; min-height: 86px; border: 1px solid var(--soft-border); border-radius: 8px; background: var(--surface-3); color: var(--accent-strong); display: grid; place-items: center; position: relative; }
+.page-art > .icon, .page-art svg { width: 42px; height: 42px; }
+.skills-art { display: grid; align-content: center; gap: 8px; padding: 14px; }
+.art-node { display: block; min-width: 92px; padding: 7px 9px; border-radius: 6px; background: var(--surface); border: 1px solid var(--line); color: var(--text); font-size: 12px; font-weight: 800; box-shadow: 0 8px 18px var(--shadow-soft); }
+.art-node:nth-child(2) { transform: translateX(18px); color: var(--accent-strong); }
+.art-node:nth-child(3) { transform: translateX(4px); color: var(--clay); }
+.cell-title { display: grid; gap: 3px; }
+.table-action { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; font-weight: 800; }
+.inline-danger { margin: -8px 0 18px; }
+.login-shell { min-height: calc(100vh - 126px); display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 34px; align-items: center; max-width: 1040px; margin: 0 auto; }
+.product-lockup { display: flex; gap: 14px; align-items: center; margin-bottom: 18px; }
+.login-brand h1 { font-size: 48px; margin: 0; }
+.login-brand p { color: var(--muted); font-size: 18px; max-width: 520px; }
+.login-panel { padding: 26px; border-top: 3px solid var(--accent); }
+.mark { width: 52px; height: 52px; border-radius: 10px; font-size: 18px; }
+.login-graphic { margin-top: 28px; width: min(460px, 100%); display: grid; gap: 10px; }
+.stack-card { display: flex; align-items: center; justify-content: space-between; min-height: 54px; padding: 12px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); box-shadow: 0 10px 22px var(--shadow-soft); font-weight: 800; }
+.stack-card span { color: var(--muted); }
+.stack-card strong { color: var(--accent-strong); }
+.stack-card.primary { border-left: 4px solid var(--accent); transform: translateX(18px); }
+.stack-card.muted-card { border-left: 4px solid var(--clay); transform: translateX(34px); }
 .diff { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 0; }
 .diff span { display: block; padding: 2px 8px; }
 .diff .add { background: #e7f6e7; color: #14532d; }
@@ -1230,12 +1299,25 @@ code { background: var(--soft); border: 1px solid var(--soft-border); border-rad
 	.split, .split.wide, .editor, .login-shell { grid-template-columns: 1fr; }
 	.help-intent-grid, .help-cards { grid-template-columns: 1fr; }
 	.inline-search { grid-template-columns: 1fr; }
-	.pagehead { display: block; }
+	.pagehead { display: block; padding: 20px; }
+	.page-art { display: none; }
 	.sticky, .preview-pane { position: static; max-height: none; }
 	nav { padding: 0 16px; gap: 10px; overflow-x: auto; align-items: center; }
 	.nav-links { gap: 2px; }
 	.brand span:last-child { display: none; }
+	.nav-links a span:not(.icon), .theme-toggle .button-label, .nav-logout .button-label { display: none; }
+	.surface { overflow: visible; }
+	table, thead, tbody, tr, th, td { display: block; width: 100%; }
+	thead { display: none; }
+	tr { padding: 14px 16px; border-bottom: 1px solid var(--line); }
+	tr:last-child { border-bottom: 0; }
+	td { padding: 4px 0; border-bottom: 0; }
+	tr:hover td { background: transparent; }
+	td:empty { display: none; }
+	td form { margin-top: 8px; }
 	.token-cell code { max-width: 220px; }
 	h1 { font-size: 26px; }
+	.login-brand h1 { font-size: 38px; }
+	.stack-card.primary, .stack-card.muted-card { transform: none; }
 }
 `

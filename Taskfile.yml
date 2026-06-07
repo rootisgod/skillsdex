@@ -12,6 +12,44 @@ tasks:
     cmds:
       - go build -o skillsdex .
 
+  launch:
+    desc: Build, start, and open the SkillsDex website
+    cmds:
+      - task build
+      - |
+        set -eu
+        url="http://127.0.0.1:8765"
+        port=8765
+        log="${TMPDIR:-/tmp}/skillsdex.log"
+        pids="$(lsof -tiTCP:${port} -sTCP:LISTEN 2>/dev/null || true)"
+        if [ -n "$pids" ]; then
+          for pid in $pids; do
+            args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+            case "$args" in
+              *"skillsdex serve"*)
+                echo "SkillsDex is already running on ${url}."
+                open "$url"
+                exit 0
+                ;;
+            esac
+          done
+          echo "Port ${port} is already in use by another process."
+          exit 1
+        fi
+        ./skillsdex serve --addr 127.0.0.1:8765 >"$log" 2>&1 &
+        pid="$!"
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+          if curl -fsS "$url" >/dev/null 2>&1; then
+            echo "SkillsDex is running on ${url}."
+            open "$url"
+            exit 0
+          fi
+          sleep 0.5
+        done
+        echo "SkillsDex did not start within 5 seconds. See ${log}."
+        kill "$pid" 2>/dev/null || true
+        exit 1
+
   kill:
     desc: Kill skillsdex server listening on port 8765
     silent: true

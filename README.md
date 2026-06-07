@@ -18,6 +18,12 @@ Start the web app and API:
 ./skillsdex serve
 ```
 
+Or build, start, and open the website in one step:
+
+```bash
+task launch
+```
+
 Open:
 
 ```text
