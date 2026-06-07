@@ -13,19 +13,20 @@ type User struct {
 }
 
 type Skill struct {
-	ID                string    `json:"id"`
-	OwnerType         string    `json:"owner_type"`
-	OwnerID           string    `json:"-"`
-	OwnerSlug         string    `json:"owner"`
-	Slug              string    `json:"slug"`
-	Name              string    `json:"name"`
-	Description       string    `json:"description"`
-	ShortDescription  string    `json:"short_description"`
-	CurrentRevisionID string    `json:"latest_revision"`
-	RevisionNumber    int       `json:"revision_number"`
-	ArchivedAt        string    `json:"archived_at,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ID                 string    `json:"id"`
+	OwnerType          string    `json:"owner_type"`
+	OwnerID            string    `json:"-"`
+	OwnerSlug          string    `json:"owner"`
+	Slug               string    `json:"slug"`
+	Name               string    `json:"name"`
+	Description        string    `json:"description"`
+	ShortDescription   string    `json:"short_description"`
+	RecommendedDefault bool      `json:"recommended_default"`
+	CurrentRevisionID  string    `json:"latest_revision"`
+	RevisionNumber     int       `json:"revision_number"`
+	ArchivedAt         string    `json:"archived_at,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 type SkillRevision struct {
@@ -62,10 +63,11 @@ type APIToken struct {
 }
 
 type SkillInput struct {
-	Owner            string `json:"owner"`
-	Slug             string `json:"slug"`
-	Name             string `json:"name"`
-	Description      string `json:"description"`
-	ShortDescription string `json:"short_description"`
-	Body             string `json:"body"`
+	Owner              string `json:"owner"`
+	Slug               string `json:"slug"`
+	Name               string `json:"name"`
+	Description        string `json:"description"`
+	ShortDescription   string `json:"short_description"`
+	RecommendedDefault bool   `json:"recommended_default"`
+	Body               string `json:"body"`
 }

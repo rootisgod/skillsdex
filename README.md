@@ -51,7 +51,13 @@ List available skills:
 ./skillsdex skills
 ```
 
-Install the default Five Advisor Review skill into Codex:
+Install all recommended default skills into Codex:
+
+```bash
+./skillsdex install-defaults --target codex
+```
+
+Or install a single skill:
 
 ```bash
 ./skillsdex install admin/five-advisor-review --target codex
@@ -109,6 +115,8 @@ Fresh installs seed useful starter skills under the `admin` namespace:
 - `admin/product-interface-redesign`
 - `admin/pull-request-summary`
 
+These seeded skills are marked as recommended defaults. You can edit a skill in the web app and toggle `Recommended default` to control whether `skillsdex install-defaults` includes it.
+
 ## What We Do Next
 
 Current context:
@@ -123,9 +131,8 @@ Near-term plan:
 
 1. Test the complete flow from a clean home directory: `serve`, web login, token generation, CLI login, `skills`, `install`, `sync`, `installed`, and modified-file protection.
 2. Add a guided setup page or checklist in the web app so new users know how to generate a token and install their first skill.
-3. Add a first-class “install recommended defaults” flow after CLI auth.
-4. Make the theme toggle available before login, or add an equivalent compact control on the login page.
-5. Only after the install/sync loop is polished, revisit phase 2 items such as teams, GitHub export, and additional agent targets.
+3. Make the theme toggle available before login, or add an equivalent compact control on the login page.
+4. Only after the install/sync loop is polished, revisit phase 2 items such as teams, GitHub export, and additional agent targets.
 
 ## Checks
 

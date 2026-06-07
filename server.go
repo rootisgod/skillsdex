@@ -62,6 +62,7 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/tokens/", a.requireWeb(a.handleTokenAction))
 	mux.HandleFunc("/skills", a.requireWeb(a.handleSkills))
 	mux.HandleFunc("/skills/", a.requireWeb(a.handleSkillRoute))
+	mux.HandleFunc("/help", a.requireWeb(a.handleHelp))
 	mux.HandleFunc("/v1/", a.handleAPI)
 	mux.HandleFunc("/", a.requireWeb(a.handleHome))
 }
@@ -387,13 +388,26 @@ func (a *app) handleSkillTop(w http.ResponseWriter, r *http.Request, u *User) {
 	a.render(w, r, u, "Top Skills", topSkillsPage(skills, msg))
 }
 
+func (a *app) handleHelp(w http.ResponseWriter, r *http.Request) {
+	u := webUser(r)
+	if r.URL.Path != "/help" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	a.render(w, r, u, "Help", helpPage())
+}
+
 func (a *app) handleSkillEdit(w http.ResponseWriter, r *http.Request, u *User, owner, slug string) {
 	raw, s, err := rawSkill(r.Context(), a.db, u.ID, owner, slug)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	in := SkillInput{Owner: owner, Slug: slug, Name: s.Name, Description: s.Description, ShortDescription: s.ShortDescription, Body: bodyFromSkillMarkdown(string(raw))}
+	in := SkillInput{Owner: owner, Slug: slug, Name: s.Name, Description: s.Description, ShortDescription: s.ShortDescription, RecommendedDefault: s.RecommendedDefault, Body: bodyFromSkillMarkdown(string(raw))}
 	if r.Method == http.MethodGet {
 		a.render(w, r, u, "Edit Skill", skillFormPage("/skills/"+owner+"/"+slug+"/edit", false, in, ""))
 		return
@@ -483,12 +497,13 @@ func skillInputFromForm(r *http.Request, defaultOwner string) SkillInput {
 		owner = defaultOwner
 	}
 	return SkillInput{
-		Owner:            owner,
-		Slug:             strings.TrimSpace(r.FormValue("slug")),
-		Name:             strings.TrimSpace(r.FormValue("name")),
-		Description:      strings.TrimSpace(r.FormValue("description")),
-		ShortDescription: strings.TrimSpace(r.FormValue("short_description")),
-		Body:             strings.TrimRight(r.FormValue("body"), "\r\n"),
+		Owner:              owner,
+		Slug:               strings.TrimSpace(r.FormValue("slug")),
+		Name:               strings.TrimSpace(r.FormValue("name")),
+		Description:        strings.TrimSpace(r.FormValue("description")),
+		ShortDescription:   strings.TrimSpace(r.FormValue("short_description")),
+		RecommendedDefault: r.FormValue("recommended_default") == "on",
+		Body:               strings.TrimRight(r.FormValue("body"), "\r\n"),
 	}
 }
 
@@ -766,9 +781,13 @@ func skillsPage(skills []Skill, archived bool) template.HTML {
 			status = "archived"
 		}
 		id := s.OwnerSlug + "/" + s.Slug
-		b.WriteString(`<tr><td><a class="identifier" href="/skills/` + html.EscapeString(id) + `">` + html.EscapeString(id) + `</a></td><td><strong>` + html.EscapeString(s.Name) + `</strong><div class="muted">` + html.EscapeString(s.ShortDescription) + `</div></td><td><span class="rev">r` + fmt.Sprintf("%d", s.RevisionNumber) + `</span></td><td>` + s.UpdatedAt.Format("2006-01-02 15:04") + `</td><td><span class="pill ` + status + `">` + status + `</span></td></tr>`)
+		b.WriteString(`<tr><td><a class="identifier" href="/skills/` + html.EscapeString(id) + `">` + html.EscapeString(id) + `</a></td><td><strong>` + html.EscapeString(s.Name) + `</strong><div class="muted">` + html.EscapeString(s.ShortDescription) + `</div>`)
+		if s.RecommendedDefault {
+			b.WriteString(`<div class="row-tags"><span class="pill active">recommended</span></div>`)
+		}
+		b.WriteString(`</td><td><span class="rev">r` + fmt.Sprintf("%d", s.RevisionNumber) + `</span></td><td>` + s.UpdatedAt.Format("2006-01-02 15:04") + `</td><td><span class="pill ` + status + `">` + status + `</span></td></tr>`)
 	}
-	b.WriteString(`</tbody></table></section><aside class="panel sticky"><h2>Install Starter Skill</h2><div class="command-card"><span>Codex target</span><pre>skillsdex install admin/five-advisor-review --target codex</pre></div><div class="command-card"><span>Sync managed installs</span><pre>skillsdex sync</pre></div></aside></div>`)
+	b.WriteString(`</tbody></table></section><aside class="panel sticky"><h2>Install Starter Skills</h2><div class="command-card"><span>Recommended defaults</span><pre>skillsdex install-defaults --target codex</pre></div><div class="command-card"><span>Single skill</span><pre>skillsdex install admin/five-advisor-review --target codex</pre></div><div class="command-card"><span>Sync managed installs</span><pre>skillsdex sync</pre></div></aside></div>`)
 	return template.HTML(b.String())
 }
 
@@ -832,6 +851,74 @@ func topSkillsPage(search agentSkillSearchResponse, msg string) template.HTML {
 	return template.HTML(b.String())
 }
 
+func helpPage() template.HTML {
+	var b strings.Builder
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Reference</p><h1>Assistant Formats</h1><p>Choose the right shape for reusable agent guidance: portable skills, repo instructions, or editor-specific rules.</p></div><div class="actions"><a class="button" href="/skills/import">Import Skills</a><a class="button secondary" href="/skills/top">Top Skills</a></div></header>`)
+	b.WriteString(`<section class="help-intent-grid" aria-label="Format guidance"><article class="panel help-principle"><span>Most portable</span><strong>Use <code>SKILL.md</code></strong><p>Package repeatable workflows as a skill directory with a clear description and focused instructions.</p></article><article class="panel help-principle"><span>Always visible</span><strong>Use repo guidance</strong><p>Keep broad project policy in files such as <code>AGENTS.md</code> or <code>CLAUDE.md</code>.</p></article><article class="panel help-principle"><span>File scoped</span><strong>Use editor rules</strong><p>Use Cursor rules when guidance should attach by glob, folder, or explicit mention.</p></article></section>`)
+	b.WriteString(`<section class="help-cards" aria-label="Tool format comparison">`)
+	rows := []struct {
+		tool       string
+		summary    string
+		paths      string
+		format     string
+		activation string
+		best       string
+		sourceURL  string
+		source     string
+	}{
+		{
+			tool:       "Claude Code",
+			summary:    "Skills handle reusable procedures; `CLAUDE.md` stays useful for broad project memory.",
+			paths:      "`~/.claude/skills/<name>/SKILL.md`, `.claude/skills/<name>/SKILL.md`, or plugin skills.",
+			format:     "`SKILL.md` with YAML frontmatter and Markdown. `description` is the key discovery field; optional scripts, references, examples, and templates can sit beside it.",
+			activation: "Claude can load a skill when the description matches the task, or you can invoke it with `/<skill-name>`. `SKILL.md` edits are detected live in watched skill folders.",
+			best:       "Repeatable commands, generated artifacts, and multi-step workflows that should not live permanently in every prompt.",
+			sourceURL:  "https://code.claude.com/docs/en/skills",
+			source:     "Claude docs",
+		},
+		{
+			tool:       "Codex",
+			summary:    "Agent Skills are Codex's reusable workflow format; plugins are the distribution unit.",
+			paths:      "Native Codex locations include repo `.agents/skills`, user `$HOME/.agents/skills`, and admin `/etc/codex/skills`. SkillsDex currently writes managed Codex installs to `~/.codex/skills/<owner>--<slug>/SKILL.md`.",
+			format:     "A skill directory with required `SKILL.md`, `name`, and `description`, plus optional `scripts/`, `references/`, `assets/`, and `agents/`.",
+			activation: "Codex can activate skills by explicit mention or by matching the task to the skill description. If an installed update does not appear, restart Codex.",
+			best:       "Portable workflows for Codex CLI, IDE, and app usage, especially when SkillsDex should install or sync them across machines.",
+			sourceURL:  "https://developers.openai.com/codex/skills",
+			source:     "Codex docs",
+		},
+		{
+			tool:       "Cursor",
+			summary:    "Rules provide persistent context for Cursor Agent and Inline Edit; `AGENTS.md` is the simpler Markdown alternative.",
+			paths:      "Project rules live in `.cursor/rules`. Nested `.cursor/rules` folders scope rules to subdirectories.",
+			format:     "Project rules are `.mdc` files with metadata and Markdown. Common fields include `description`, `globs`, and `alwaysApply`.",
+			activation: "Rules can be Always included, Auto Attached by glob, Agent Requested by description, or Manual through `@ruleName`.",
+			best:       "Codebase conventions, architecture decisions, and file-scoped guidance that should stay versioned with a repo.",
+			sourceURL:  "https://docs.cursor.com/en/context",
+			source:     "Cursor docs",
+		},
+	}
+	for _, row := range rows {
+		b.WriteString(`<article class="panel help-card"><div class="help-card-head"><h2>` + html.EscapeString(row.tool) + `</h2><a href="` + html.EscapeString(row.sourceURL) + `" target="_blank" rel="noopener">` + html.EscapeString(row.source) + `</a></div><p class="help-summary">` + formatHelpText(row.summary) + `</p><dl class="help-facts"><div><dt>Where it lives</dt><dd>` + formatHelpText(row.paths) + `</dd></div><div><dt>Format</dt><dd>` + formatHelpText(row.format) + `</dd></div><div><dt>Activation</dt><dd>` + formatHelpText(row.activation) + `</dd></div><div><dt>Best fit</dt><dd>` + formatHelpText(row.best) + `</dd></div></dl></article>`)
+	}
+	b.WriteString(`</section>`)
+	b.WriteString(`<div class="split help-grid"><section class="panel"><h2>Portability checklist</h2><div class="note-list"><p><strong>Lead with trigger language.</strong> Put the task and boundaries in the skill or rule description so the agent can select it reliably.</p><p><strong>Keep the loaded file short.</strong> Link to supporting files for long references, examples, scripts, and templates.</p><p><strong>Separate policy from procedure.</strong> Use skills for actions; use repo guidance or rules for conventions that should always be visible.</p></div></section>`)
+	b.WriteString(`<aside class="panel"><h2>Quick paths</h2><div class="path-list"><div class="command-card"><span>Claude project skill</span><pre>.claude/skills/name/SKILL.md</pre></div><div class="command-card"><span>Codex repo skill</span><pre>.agents/skills/name/SKILL.md</pre></div><div class="command-card"><span>SkillsDex Codex install</span><pre>~/.codex/skills/owner--slug/SKILL.md</pre></div><div class="command-card"><span>Cursor project rule</span><pre>.cursor/rules/name.mdc</pre></div><div class="command-card"><span>Simple repo guidance</span><pre>AGENTS.md</pre></div></div></aside></div>`)
+	return template.HTML(b.String())
+}
+
+func formatHelpText(s string) string {
+	parts := strings.Split(s, "`")
+	for i, part := range parts {
+		escaped := html.EscapeString(part)
+		if i%2 == 1 {
+			parts[i] = `<code>` + escaped + `</code>`
+		} else {
+			parts[i] = escaped
+		}
+	}
+	return strings.Join(parts, "")
+}
+
 func agentSkillResultsTable(results []agentSkillSearchResult) string {
 	var b strings.Builder
 	b.WriteString(`<table class="result-table sortable" data-sort-table><thead><tr><th><button class="sort-head" type="button" data-sort="text">Skill</button></th><th><button class="sort-head" type="button" data-sort="number">Quality</button></th><th><button class="sort-head" type="button" data-sort="number">Security</button></th><th><button class="sort-head" type="button" data-sort="number">GitHub Stars</button></th><th></th></tr></thead><tbody>`)
@@ -886,6 +973,11 @@ func skillFormPage(action string, create bool, in SkillInput, msg string) templa
 	b.WriteString(`></label><label>Name <input name="name" value="` + html.EscapeString(in.Name) + `" required></label>
 		<label>Description <textarea name="description" rows="3" required>` + html.EscapeString(in.Description) + `</textarea></label>
 		<label>Short description <input name="short_description" value="` + html.EscapeString(in.ShortDescription) + `"></label>
+		<label class="check"><input name="recommended_default" type="checkbox"`)
+	if in.RecommendedDefault {
+		b.WriteString(` checked`)
+	}
+	b.WriteString(`> Recommended default</label>
 		<label>Markdown body <textarea name="body" rows="20" required>` + html.EscapeString(in.Body) + `</textarea></label>
 		<div class="actions"><button name="action" value="save" type="submit">Save Revision</button><button class="secondary" name="action" value="preview" type="submit">Preview</button></div></section><aside class="panel preview-pane"><h2>Generated SKILL.md</h2><pre class="raw">` + html.EscapeString(preview) + `</pre><h2>Rendered Preview</h2><div class="rendered mini">` + simpleMarkdownHTML(in.Body) + `</div></aside></form>`)
 	return template.HTML(b.String())
@@ -903,7 +995,11 @@ func skillDetailPage(s *Skill, raw string) template.HTML {
 	} else {
 		b.WriteString(`<form method="post" action="/skills/` + html.EscapeString(id) + `/archive"><button class="link danger" type="submit">Archive skill</button></form>`)
 	}
-	b.WriteString(`<div class="split wide"><section class="rendered">` + simpleMarkdownHTML(bodyFromSkillMarkdown(raw)) + `</section><aside class="panel sticky"><h2>Install</h2><div class="command-card"><span>Codex</span><pre>skillsdex install ` + html.EscapeString(id) + ` --target codex</pre></div><div class="meta-list"><div><span>Name</span><strong>` + html.EscapeString(s.Name) + `</strong></div><div><span>Short description</span><strong>` + html.EscapeString(s.ShortDescription) + `</strong></div></div></aside></div>`)
+	recommended := "no"
+	if s.RecommendedDefault {
+		recommended = "yes"
+	}
+	b.WriteString(`<div class="split wide"><section class="rendered">` + simpleMarkdownHTML(bodyFromSkillMarkdown(raw)) + `</section><aside class="panel sticky"><h2>Install</h2><div class="command-card"><span>Codex</span><pre>skillsdex install ` + html.EscapeString(id) + ` --target codex</pre></div><div class="meta-list"><div><span>Name</span><strong>` + html.EscapeString(s.Name) + `</strong></div><div><span>Short description</span><strong>` + html.EscapeString(s.ShortDescription) + `</strong></div><div><span>Recommended default</span><strong>` + recommended + `</strong></div></div></aside></div>`)
 	return template.HTML(b.String())
 }
 
@@ -952,6 +1048,7 @@ const layoutTmpl = `<!doctype html>
 			<div class="nav-links">
 				<a href="/skills">Skills</a>
 				<a href="/skills/top">Top Skills</a>
+				<a href="/help">Help</a>
 				<a href="/tokens">API Tokens</a>
 				{{if .User.IsAdmin}}<a href="/admin/users">Users</a>{{end}}
 			</div>
@@ -1074,6 +1171,25 @@ button:hover, .button:hover { background: var(--accent-strong); color: #fff; }
 .search-block { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
 .inline-search { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; margin-bottom: 14px; }
 .inline-search label { margin-bottom: 0; }
+.help-intent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 22px; }
+.help-principle { display: grid; gap: 8px; }
+.help-principle span, .help-facts dt { color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.help-principle strong { font-size: 17px; }
+.help-principle p { margin: 0; color: var(--muted); }
+.help-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.help-card { display: grid; gap: 14px; }
+.help-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.help-card-head h2 { margin: 0; }
+.help-card-head a { white-space: nowrap; font-size: 13px; font-weight: 800; }
+.help-summary { margin: 0; color: var(--muted); }
+.help-facts { display: grid; gap: 12px; margin: 0; }
+.help-facts div { display: grid; gap: 5px; padding-top: 12px; border-top: 1px solid var(--line); }
+.help-facts dd { margin: 0; line-height: 1.45; }
+.help-grid { margin-top: 22px; }
+.note-list { display: grid; gap: 12px; }
+.note-list p { margin: 0; }
+.path-list { display: grid; gap: 2px; }
+code { background: var(--soft); border: 1px solid var(--soft-border); border-radius: 4px; padding: 1px 4px; }
 .sort-head { min-height: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: inherit; text-transform: inherit; letter-spacing: inherit; }
 .sort-head:hover { background: transparent; color: var(--accent-strong); }
 .sort-head::after { content: "↕"; margin-left: 5px; color: var(--muted); font-size: 10px; }
@@ -1086,6 +1202,7 @@ button:hover, .button:hover { background: var(--accent-strong); color: #fff; }
 .rendered h1:first-child { margin-top: 0; }
 .mini { padding: 14px; }
 .muted { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.row-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .identifier { font-weight: 800; text-decoration: none; }
 .pill, .rev { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--soft-border); background: var(--soft); color: var(--text); font-size: 12px; font-weight: 800; }
 .pill.active { color: var(--ok); background: var(--ok-bg); border-color: var(--ok-line); }
@@ -1111,6 +1228,7 @@ button:hover, .button:hover { background: var(--accent-strong); color: #fff; }
 @media (max-width: 820px) {
 	main { padding: 18px; }
 	.split, .split.wide, .editor, .login-shell { grid-template-columns: 1fr; }
+	.help-intent-grid, .help-cards { grid-template-columns: 1fr; }
 	.inline-search { grid-template-columns: 1fr; }
 	.pagehead { display: block; }
 	.sticky, .preview-pane { position: static; max-height: none; }

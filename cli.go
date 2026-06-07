@@ -160,31 +160,92 @@ func runInstall(args []string) error {
 	if resp.Skill.ArchivedAt != "" {
 		return errors.New("remote skill is archived")
 	}
-	content := []byte(resp.Raw)
-	path, err := targetPath(target, owner, slug)
+	manifest, err := loadManifest()
 	if err != nil {
 		return err
+	}
+	if _, err := installSkillResponse(&manifest, resp, target); err != nil {
+		return err
+	}
+	if err := saveManifest(manifest); err != nil {
+		return err
+	}
+	return nil
+}
+
+func runInstallDefaults(args []string) error {
+	target, err := parseInstallDefaultsArgs(args)
+	if err != nil {
+		return errors.New("usage: skillsdex install-defaults [--target codex]")
+	}
+	client, err := authenticatedClient()
+	if err != nil {
+		return err
+	}
+	var list struct {
+		Skills []Skill `json:"skills"`
+	}
+	if err := client.getJSON("/v1/skills", &list); err != nil {
+		return err
+	}
+	var defaults []Skill
+	for _, s := range list.Skills {
+		if s.RecommendedDefault && s.ArchivedAt == "" {
+			defaults = append(defaults, s)
+		}
+	}
+	sort.Slice(defaults, func(i, j int) bool {
+		return defaults[i].OwnerSlug+"/"+defaults[i].Slug < defaults[j].OwnerSlug+"/"+defaults[j].Slug
+	})
+	if len(defaults) == 0 {
+		fmt.Println("No recommended default skills found.")
+		return nil
 	}
 	manifest, err := loadManifest()
 	if err != nil {
 		return err
 	}
-	_, existing := manifest.find(owner, slug, target)
-	if err := confirmOverwriteIfNeeded(path, existing); err != nil {
-		return err
+	installed := 0
+	for _, s := range defaults {
+		resp, err := client.fetchSkill(s.OwnerSlug, s.Slug)
+		if err != nil {
+			return err
+		}
+		if _, err := installSkillResponse(&manifest, resp, target); err != nil {
+			return err
+		}
+		installed++
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	if err := os.WriteFile(path, content, 0600); err != nil {
-		return err
-	}
-	manifest.upsert(newInstall(owner, slug, target, path, resp.Skill.CurrentRevisionID, content))
 	if err := saveManifest(manifest); err != nil {
 		return err
 	}
-	fmt.Printf("Installed %s/%s to %s\n", owner, slug, path)
+	fmt.Printf("Installed %d recommended default skill(s).\n", installed)
 	return nil
+}
+
+func installSkillResponse(manifest *Manifest, resp skillResponse, target string) (string, error) {
+	if resp.Skill.ArchivedAt != "" {
+		return "", errors.New("remote skill is archived")
+	}
+	owner, slug := resp.Skill.OwnerSlug, resp.Skill.Slug
+	content := []byte(resp.Raw)
+	path, err := targetPath(target, owner, slug)
+	if err != nil {
+		return "", err
+	}
+	_, existing := manifest.find(owner, slug, target)
+	if err := confirmOverwriteIfNeeded(path, existing); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, content, 0600); err != nil {
+		return "", err
+	}
+	manifest.upsert(newInstall(owner, slug, target, path, resp.Skill.CurrentRevisionID, content))
+	fmt.Printf("Installed %s/%s to %s\n", owner, slug, path)
+	return path, nil
 }
 
 func runInstalled() error {
@@ -494,4 +555,28 @@ func parseTargetArgs(args []string) (string, string, error) {
 		return "", "", errors.New("missing identifier")
 	}
 	return identifier, target, nil
+}
+
+func parseInstallDefaultsArgs(args []string) (string, error) {
+	target := "codex"
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--target" {
+			if i+1 >= len(args) {
+				return "", errors.New("missing target")
+			}
+			target = args[i+1]
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "--target=") {
+			target = strings.TrimPrefix(arg, "--target=")
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return "", fmt.Errorf("unknown flag %s", arg)
+		}
+		return "", errors.New("too many arguments")
+	}
+	return target, nil
 }

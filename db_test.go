@@ -39,6 +39,11 @@ func TestDefaultAdminAndTenantScopedSkills(t *testing.T) {
 	if len(skills) != len(defaultSkills()) {
 		t.Fatalf("default skill count = %d, want %d", len(skills), len(defaultSkills()))
 	}
+	for _, s := range skills {
+		if !s.RecommendedDefault {
+			t.Fatalf("default skill %s/%s is not marked recommended", s.OwnerSlug, s.Slug)
+		}
+	}
 	if err := createUser(ctx, db, "alice", "", "secret", false); err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +63,13 @@ func TestDefaultAdminAndTenantScopedSkills(t *testing.T) {
 	}
 	if _, err := getSkill(ctx, db, admin.ID, "alice", "debugging"); !isNotFound(err) {
 		t.Fatalf("admin should not read alice skill through owner slug, err=%v", err)
+	}
+	aliceSkill, err := getSkill(ctx, db, alice.ID, "alice", "debugging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aliceSkill.RecommendedDefault {
+		t.Fatal("new user skill should not be recommended by default")
 	}
 }
 
@@ -83,5 +95,44 @@ func TestDefaultSkillSeedIsIdempotent(t *testing.T) {
 	}
 	if count != len(defaultSkills()) {
 		t.Fatalf("default skill count = %d, want %d", count, len(defaultSkills()))
+	}
+}
+
+func TestRecommendedDefaultCanBeUnsetOnSeededSkill(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "skillsdex.db")
+	db, err := openDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := getUserByUsername(context.Background(), db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	skill, err := getSkill(context.Background(), db, admin.ID, "admin", "five-advisor-review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE skills SET recommended_default = 0 WHERE id = ?`, skill.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = openDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	admin, err = getUserByUsername(context.Background(), db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	skill, err = getSkill(context.Background(), db, admin.ID, "admin", "five-advisor-review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skill.RecommendedDefault {
+		t.Fatal("seeded skill was re-marked recommended after user unset it")
 	}
 }

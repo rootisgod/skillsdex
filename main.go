@@ -54,6 +54,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "install: %v\n", err)
 			os.Exit(1)
 		}
+	case "install-defaults":
+		if err := runInstallDefaults(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "install-defaults: %v\n", err)
+			os.Exit(1)
+		}
 	case "installed":
 		if err := runInstalled(); err != nil {
 			fmt.Fprintf(os.Stderr, "installed: %v\n", err)
@@ -93,6 +98,7 @@ Usage:
   skillsdex skills
   skillsdex show <owner>/<slug> [--raw]
   skillsdex install <owner>/<slug> [--target codex]
+  skillsdex install-defaults [--target codex]
   skillsdex installed
   skillsdex sync
   skillsdex uninstall <owner>/<slug> [--target codex]

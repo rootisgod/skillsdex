@@ -274,6 +274,7 @@ func upsertImportedSkill(ctx context.Context, db *sql.DB, user *User, in SkillIn
 		if string(raw) == renderSkillMarkdown(in) {
 			return existing, "unchanged", nil
 		}
+		in.RecommendedDefault = existing.RecommendedDefault
 		updated, err := updateSkill(ctx, db, user, in.Owner, in.Slug, in)
 		return updated, "updated", err
 	} else if !isNotFound(err) {

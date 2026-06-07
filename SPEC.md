@@ -227,6 +227,7 @@ skillsdex whoami
 skillsdex skills
 skillsdex show <owner>/<slug>
 skillsdex install <owner>/<slug> --target codex
+skillsdex install-defaults --target codex
 skillsdex installed
 skillsdex sync
 skillsdex uninstall <owner>/<slug> --target codex
@@ -247,6 +248,7 @@ Recommended v0 command examples:
 ```bash
 skillsdex login
 skillsdex skills
+skillsdex install-defaults --target codex
 skillsdex install iain/debugging --target codex
 skillsdex sync
 ```
@@ -900,7 +902,7 @@ The first useful release is complete when:
 - Use custom CSS.
 - Archived skills are hidden by default with a show-archived toggle.
 - Do not hard-delete users or skills in phase 1; deactivate/archive instead.
-- CLI installs one skill at a time in phase 1.
+- CLI installs one skill at a time and can install skills marked as recommended defaults in one command.
 - Interactive CLI prompts before overwriting unmanaged files.
 - Non-interactive CLI fails on unmanaged overwrite unless a future force flag is used.
 
