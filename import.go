@@ -35,6 +35,7 @@ type githubContent struct {
 	Path        string `json:"path"`
 	Type        string `json:"type"`
 	DownloadURL string `json:"download_url"`
+	HTMLURL     string `json:"html_url"`
 }
 
 type agentSkillSource struct {
@@ -93,29 +94,29 @@ func importSkillInputsFromGitHub(ctx context.Context, client httpDoer, sourceURL
 			return nil, err
 		}
 		fallback := strings.TrimSuffix(path.Base(source.Path), path.Ext(source.Path))
-		skills = append(skills, skillInputFromRawMarkdown(raw, owner, fallback, "Imported from GitHub."))
+		skills = append(skills, withSource(skillInputFromRawMarkdown(raw, owner, fallback, "Imported from GitHub."), "github", sourceURL))
 		return skills, nil
 	}
 
 	if strings.EqualFold(path.Base(source.Path), "SKILL.md") {
-		raw, err := fetchGitHubFile(ctx, client, source, source.Path)
+		raw, sourceHTMLURL, err := fetchGitHubFile(ctx, client, source, source.Path)
 		if err != nil {
 			return nil, err
 		}
 		fallback := strings.TrimSuffix(path.Base(path.Dir(source.Path)), path.Ext(path.Dir(source.Path)))
-		skills = append(skills, skillInputFromRawMarkdown(raw, owner, fallback, "Imported from GitHub."))
+		skills = append(skills, withSource(skillInputFromRawMarkdown(raw, owner, fallback, "Imported from GitHub."), "github", firstNonEmpty(sourceHTMLURL, sourceURL)))
 		return skills, nil
 	}
 
 	if source.Path != "" {
-		raw, err := fetchGitHubFile(ctx, client, source, path.Join(source.Path, "SKILL.md"))
+		raw, sourceHTMLURL, err := fetchGitHubFile(ctx, client, source, path.Join(source.Path, "SKILL.md"))
 		if err != nil {
 			if errors.Is(err, errGitHubNotFound) {
 				return nil, fmt.Errorf("no SKILL.md found at %s", sourceURL)
 			}
 			return nil, err
 		}
-		skills = append(skills, skillInputFromRawMarkdown(raw, owner, path.Base(source.Path), "Imported from GitHub."))
+		skills = append(skills, withSource(skillInputFromRawMarkdown(raw, owner, path.Base(source.Path), "Imported from GitHub."), "github", firstNonEmpty(sourceHTMLURL, sourceURL)))
 		return skills, nil
 	}
 
@@ -127,21 +128,21 @@ func importSkillInputsFromGitHub(ctx context.Context, client httpDoer, sourceURL
 		switch entry.Type {
 		case "file":
 			if strings.EqualFold(entry.Name, "SKILL.md") {
-				raw, err := fetchGitHubFile(ctx, client, source, entry.Path)
+				raw, sourceHTMLURL, err := fetchGitHubFile(ctx, client, source, entry.Path)
 				if err != nil {
 					return nil, err
 				}
-				skills = append(skills, skillInputFromRawMarkdown(raw, owner, source.Repo, "Imported from GitHub."))
+				skills = append(skills, withSource(skillInputFromRawMarkdown(raw, owner, source.Repo, "Imported from GitHub."), "github", firstNonEmpty(sourceHTMLURL, entry.HTMLURL, sourceURL)))
 			}
 		case "dir":
-			raw, err := fetchGitHubFile(ctx, client, source, path.Join(entry.Path, "SKILL.md"))
+			raw, sourceHTMLURL, err := fetchGitHubFile(ctx, client, source, path.Join(entry.Path, "SKILL.md"))
 			if errors.Is(err, errGitHubNotFound) {
 				continue
 			}
 			if err != nil {
 				return nil, err
 			}
-			skills = append(skills, skillInputFromRawMarkdown(raw, owner, entry.Name, "Imported from GitHub."))
+			skills = append(skills, withSource(skillInputFromRawMarkdown(raw, owner, entry.Name, "Imported from GitHub."), "github", firstNonEmpty(entry.HTMLURL, sourceHTMLURL, sourceURL)))
 		}
 	}
 	return skills, nil
@@ -181,6 +182,7 @@ func importSkillInputsFromAgentSkill(ctx context.Context, client httpDoer, sourc
 	fallbackDescription := firstNonEmpty(payload.Description, "Imported from agentskill.sh.")
 	in := skillInputFromRawMarkdown(payload.SkillMd, owner, fallbackSlug, fallbackDescription)
 	in.Body = stripAgentSkillMetadataHeader(in.Body)
+	in = withSource(in, "agentskill.sh", "https://agentskill.sh/@"+source.Slug)
 	return []SkillInput{in}, nil
 }
 
@@ -272,7 +274,8 @@ func upsertImportedSkill(ctx context.Context, db *sql.DB, user *User, in SkillIn
 			return nil, "", err
 		}
 		if string(raw) == renderSkillMarkdown(in) {
-			return existing, "unchanged", nil
+			updated, err := updateSkillSource(ctx, db, user.ID, in.Owner, in.Slug, in)
+			return updated, "unchanged", err
 		}
 		in.RecommendedDefault = existing.RecommendedDefault
 		updated, err := updateSkill(ctx, db, user, in.Owner, in.Slug, in)
@@ -282,6 +285,13 @@ func upsertImportedSkill(ctx context.Context, db *sql.DB, user *User, in SkillIn
 	}
 	created, err := createSkill(ctx, db, user, in)
 	return created, "created", err
+}
+
+func withSource(in SkillInput, provider, sourceURL string) SkillInput {
+	in.SourceProvider = provider
+	in.SourceURL = strings.TrimSpace(sourceURL)
+	in.SourceExplicit = true
+	return in
 }
 
 func parseGitHubSource(raw string) (githubSource, error) {
@@ -370,19 +380,20 @@ func fetchGitHubDirectory(ctx context.Context, client httpDoer, source githubSou
 	return entries, nil
 }
 
-func fetchGitHubFile(ctx context.Context, client httpDoer, source githubSource, contentPath string) (string, error) {
+func fetchGitHubFile(ctx context.Context, client httpDoer, source githubSource, contentPath string) (string, string, error) {
 	body, err := fetchGitHubAPI(ctx, client, source, contentPath)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	var file githubContent
 	if err := json.Unmarshal(body, &file); err != nil {
-		return "", errors.New("GitHub path is not a file")
+		return "", "", errors.New("GitHub path is not a file")
 	}
 	if file.Type != "file" || file.DownloadURL == "" {
-		return "", errGitHubNotFound
+		return "", "", errGitHubNotFound
 	}
-	return fetchGitHubRaw(ctx, client, file.DownloadURL)
+	raw, err := fetchGitHubRaw(ctx, client, file.DownloadURL)
+	return raw, file.HTMLURL, err
 }
 
 func fetchGitHubAPI(ctx context.Context, client httpDoer, source githubSource, contentPath string) ([]byte, error) {

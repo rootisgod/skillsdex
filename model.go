@@ -22,6 +22,8 @@ type Skill struct {
 	Description        string    `json:"description"`
 	ShortDescription   string    `json:"short_description"`
 	RecommendedDefault bool      `json:"recommended_default"`
+	SourceProvider     string    `json:"source_provider,omitempty"`
+	SourceURL          string    `json:"source_url,omitempty"`
 	CurrentRevisionID  string    `json:"latest_revision"`
 	RevisionNumber     int       `json:"revision_number"`
 	ArchivedAt         string    `json:"archived_at,omitempty"`
@@ -69,5 +71,8 @@ type SkillInput struct {
 	Description        string `json:"description"`
 	ShortDescription   string `json:"short_description"`
 	RecommendedDefault bool   `json:"recommended_default"`
+	SourceProvider     string `json:"source_provider,omitempty"`
+	SourceURL          string `json:"source_url,omitempty"`
+	SourceExplicit     bool   `json:"-"`
 	Body               string `json:"body"`
 }

@@ -128,6 +128,13 @@ func runShow(args []string) error {
 	s := resp.Skill
 	fmt.Printf("Identifier: %s/%s\nName: %s\nDescription: %s\nShort description: %s\nRevision: %d\nUpdated: %s\n",
 		s.OwnerSlug, s.Slug, s.Name, s.Description, s.ShortDescription, s.RevisionNumber, s.UpdatedAt.Format("2006-01-02 15:04"))
+	if s.SourceProvider != "" || s.SourceURL != "" {
+		source := sourceProviderLabel(s.SourceProvider)
+		if s.SourceURL != "" {
+			source += " (" + s.SourceURL + ")"
+		}
+		fmt.Printf("Source: %s\n", source)
+	}
 	if s.ArchivedAt != "" {
 		fmt.Printf("Archived: %s\n", s.ArchivedAt)
 	}

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -11,9 +13,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -280,6 +284,10 @@ func (a *app) handleSkillRoute(w http.ResponseWriter, r *http.Request) {
 		a.handleSkillTop(w, r, u)
 		return
 	}
+	if rel == "export" {
+		a.handleSkillExport(w, r, u)
+		return
+	}
 	parts := strings.Split(rel, "/")
 	if len(parts) < 2 {
 		http.NotFound(w, r)
@@ -297,6 +305,8 @@ func (a *app) handleSkillRoute(w http.ResponseWriter, r *http.Request) {
 		a.handleSkillRaw(w, r, u, owner, slug)
 	case "archive":
 		a.handleSkillArchive(w, r, u, owner, slug)
+	case "delete":
+		a.handleSkillDelete(w, r, u, owner, slug)
 	case "revisions":
 		if len(parts) == 3 {
 			a.handleRevisions(w, r, u, owner, slug)
@@ -388,6 +398,121 @@ func (a *app) handleSkillTop(w http.ResponseWriter, r *http.Request, u *User) {
 	a.render(w, r, u, "Top Skills", topSkillsPage(skills, msg))
 }
 
+func (a *app) handleSkillExport(w http.ResponseWriter, r *http.Request, u *User) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	data, err := buildSkillsExport(r.Context(), a.db, u)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	filename := "skillsdex-" + exportPathPart(u.Username) + "-skills.zip"
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(data)
+}
+
+type exportManifest struct {
+	ExportedAt string            `json:"exported_at"`
+	User       string            `json:"user"`
+	Skills     []exportSkillMeta `json:"skills"`
+}
+
+type exportSkillMeta struct {
+	Identifier         string `json:"identifier"`
+	Name               string `json:"name"`
+	Description        string `json:"description"`
+	ShortDescription   string `json:"short_description,omitempty"`
+	RevisionNumber     int    `json:"revision_number"`
+	Archived           bool   `json:"archived"`
+	RecommendedDefault bool   `json:"recommended_default"`
+	SourceProvider     string `json:"source_provider,omitempty"`
+	SourceURL          string `json:"source_url,omitempty"`
+	Path               string `json:"path"`
+}
+
+func buildSkillsExport(ctx context.Context, db *sql.DB, u *User) ([]byte, error) {
+	skills, err := listSkills(ctx, db, u.ID, true)
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	manifest := exportManifest{ExportedAt: nowUTC().Format(time.RFC3339), User: u.Username}
+	for _, s := range skills {
+		raw, _, err := rawSkill(ctx, db, u.ID, s.OwnerSlug, s.Slug)
+		if err != nil {
+			return nil, err
+		}
+		dir := exportPathPart(s.OwnerSlug) + "--" + exportPathPart(s.Slug)
+		skillPath := dir + "/SKILL.md"
+		f, err := zw.Create(skillPath)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := f.Write(raw); err != nil {
+			return nil, err
+		}
+		manifest.Skills = append(manifest.Skills, exportSkillMeta{
+			Identifier:         s.OwnerSlug + "/" + s.Slug,
+			Name:               s.Name,
+			Description:        s.Description,
+			ShortDescription:   s.ShortDescription,
+			RevisionNumber:     s.RevisionNumber,
+			Archived:           s.ArchivedAt != "",
+			RecommendedDefault: s.RecommendedDefault,
+			SourceProvider:     s.SourceProvider,
+			SourceURL:          s.SourceURL,
+			Path:               skillPath,
+		})
+	}
+	manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	f, err := zw.Create("skillsdex-export.json")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := f.Write(manifestBytes); err != nil {
+		return nil, err
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func exportPathPart(value string) string {
+	value = strings.TrimSpace(value)
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(value) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if (r == '-' || r == '_' || r == '.') && b.Len() > 0 {
+			b.WriteRune(r)
+			lastDash = r == '-'
+			continue
+		}
+		if !lastDash && b.Len() > 0 {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-._")
+	if out == "" {
+		return "skill"
+	}
+	return out
+}
+
 func (a *app) handleHelp(w http.ResponseWriter, r *http.Request) {
 	u := webUser(r)
 	if r.URL.Path != "/help" {
@@ -407,7 +532,7 @@ func (a *app) handleSkillEdit(w http.ResponseWriter, r *http.Request, u *User, o
 		http.NotFound(w, r)
 		return
 	}
-	in := SkillInput{Owner: owner, Slug: slug, Name: s.Name, Description: s.Description, ShortDescription: s.ShortDescription, RecommendedDefault: s.RecommendedDefault, Body: bodyFromSkillMarkdown(string(raw))}
+	in := SkillInput{Owner: owner, Slug: slug, Name: s.Name, Description: s.Description, ShortDescription: s.ShortDescription, RecommendedDefault: s.RecommendedDefault, SourceProvider: s.SourceProvider, SourceURL: s.SourceURL, Body: bodyFromSkillMarkdown(string(raw))}
 	if r.Method == http.MethodGet {
 		a.render(w, r, u, "Edit Skill", skillFormPage("/skills/"+owner+"/"+slug+"/edit", false, in, ""))
 		return
@@ -466,6 +591,18 @@ func (a *app) handleSkillArchive(w http.ResponseWriter, r *http.Request, u *User
 	http.Redirect(w, r, "/skills?archived=1", http.StatusFound)
 }
 
+func (a *app) handleSkillDelete(w http.ResponseWriter, r *http.Request, u *User, owner, slug string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := deleteSkill(r.Context(), a.db, u.ID, owner, slug); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/skills", http.StatusFound)
+}
+
 func (a *app) handleRevisions(w http.ResponseWriter, r *http.Request, u *User, owner, slug string) {
 	revs, err := listRevisions(r.Context(), a.db, u.ID, owner, slug)
 	if err != nil {
@@ -503,6 +640,9 @@ func skillInputFromForm(r *http.Request, defaultOwner string) SkillInput {
 		Description:        strings.TrimSpace(r.FormValue("description")),
 		ShortDescription:   strings.TrimSpace(r.FormValue("short_description")),
 		RecommendedDefault: r.FormValue("recommended_default") == "on",
+		SourceProvider:     strings.TrimSpace(r.FormValue("source_provider")),
+		SourceURL:          strings.TrimSpace(r.FormValue("source_url")),
+		SourceExplicit:     true,
 		Body:               strings.TrimRight(r.FormValue("body"), "\r\n"),
 	}
 }
@@ -665,20 +805,22 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, u *User, title stri
 
 func icon(name string) string {
 	icons := map[string]string{
-		"archive": `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18M5 7l1 13h12l1-13M9 11h6M5 4h14v3H5z"/></svg>`,
-		"book":    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/></svg>`,
-		"bolt":    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 2-9 13h8l-1 7 9-13h-8z"/></svg>`,
-		"code":    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 9-4 3 4 3M16 9l4 3-4 3M14 4l-4 16"/></svg>`,
-		"edit":    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>`,
-		"help":    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.1 9a3 3 0 1 1 5.8 1c-.8 1.3-2.9 1.4-2.9 4M12 18h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>`,
-		"import":  `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M8 11l4 4 4-4M4 17v3h16v-3"/></svg>`,
-		"key":     `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 7a5 5 0 1 0-3.5 8.5L14 18h2v2h2v2h3v-3l-6.5-6.5A5 5 0 0 0 15 7z"/></svg>`,
-		"logout":  `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>`,
-		"plus":    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
-		"search":  `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.3-4.3M10 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16z"/></svg>`,
-		"spark":   `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.7 5.2L19 10l-5.3 1.8L12 17l-1.7-5.2L5 10l5.3-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>`,
-		"sun":     `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4M17 12a5 5 0 1 1-10 0 5 5 0 0 1 10 0z"/></svg>`,
-		"users":   `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg>`,
+		"archive":  `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18M5 7l1 13h12l1-13M9 11h6M5 4h14v3H5z"/></svg>`,
+		"book":     `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/></svg>`,
+		"bolt":     `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 2-9 13h8l-1 7 9-13h-8z"/></svg>`,
+		"code":     `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 9-4 3 4 3M16 9l4 3-4 3M14 4l-4 16"/></svg>`,
+		"download": `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M8 11l4 4 4-4M5 21h14"/></svg>`,
+		"edit":     `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>`,
+		"help":     `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.1 9a3 3 0 1 1 5.8 1c-.8 1.3-2.9 1.4-2.9 4M12 18h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>`,
+		"import":   `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M8 11l4 4 4-4M4 17v3h16v-3"/></svg>`,
+		"key":      `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 7a5 5 0 1 0-3.5 8.5L14 18h2v2h2v2h3v-3l-6.5-6.5A5 5 0 0 0 15 7z"/></svg>`,
+		"logout":   `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>`,
+		"plus":     `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
+		"search":   `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.3-4.3M10 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16z"/></svg>`,
+		"spark":    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.7 5.2L19 10l-5.3 1.8L12 17l-1.7-5.2L5 10l5.3-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>`,
+		"sun":      `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4M17 12a5 5 0 1 1-10 0 5 5 0 0 1 10 0z"/></svg>`,
+		"trash":    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 16h10l1-16M10 11v6M14 11v6"/></svg>`,
+		"users":    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg>`,
 	}
 	if v, ok := icons[name]; ok {
 		return `<span class="icon">` + v + `</span>`
@@ -794,6 +936,7 @@ func skillsPage(skills []Skill, archived bool) template.HTML {
 	b.WriteString(`<header class="pagehead hero-head"><div><p class="eyebrow">Library</p><h1>Skills</h1><p>Browse, import, revise, and install reusable agent workflows.</p><div class="metrics"><span><strong>` + fmt.Sprintf("%d", active) + `</strong> active</span><span><strong>` + fmt.Sprintf("%d", archivedCount) + `</strong> archived</span></div></div><div class="actions"><a class="button" href="/skills/new">` + iconLabel("plus", "New Skill") + `</a> `)
 	b.WriteString(`<a class="button secondary" href="/skills/import">` + iconLabel("import", "Import") + `</a> `)
 	b.WriteString(`<a class="button secondary" href="/skills/top">` + iconLabel("spark", "Top Skills") + `</a> `)
+	b.WriteString(`<a class="button secondary" href="/skills/export">` + iconLabel("download", "Export") + `</a> `)
 	if archived {
 		b.WriteString(`<a class="button ghost" href="/skills">Hide archived</a>`)
 	} else {
@@ -812,6 +955,9 @@ func skillsPage(skills []Skill, archived bool) template.HTML {
 		b.WriteString(`<tr><td><a class="identifier" href="/skills/` + html.EscapeString(id) + `">` + html.EscapeString(id) + `</a></td><td><div class="cell-title"><strong>` + html.EscapeString(s.Name) + `</strong><div class="muted">` + html.EscapeString(s.ShortDescription) + `</div></div>`)
 		if s.RecommendedDefault {
 			b.WriteString(`<div class="row-tags"><span class="pill active">recommended</span></div>`)
+		}
+		if s.SourceProvider != "" {
+			b.WriteString(`<div class="row-tags"><span class="pill source">` + html.EscapeString(sourceProviderLabel(s.SourceProvider)) + `</span></div>`)
 		}
 		b.WriteString(`</td><td><span class="rev">r` + fmt.Sprintf("%d", s.RevisionNumber) + `</span></td><td>` + s.UpdatedAt.Format("2006-01-02 15:04") + `</td><td><span class="pill ` + status + `">` + status + `</span></td></tr>`)
 	}
@@ -1001,6 +1147,8 @@ func skillFormPage(action string, create bool, in SkillInput, msg string) templa
 	b.WriteString(`></label><label>Name <input name="name" value="` + html.EscapeString(in.Name) + `" required></label>
 		<label>Description <textarea name="description" rows="3" required>` + html.EscapeString(in.Description) + `</textarea></label>
 		<label>Short description <input name="short_description" value="` + html.EscapeString(in.ShortDescription) + `"></label>
+		<div class="form-grid"><label>Source provider <input name="source_provider" value="` + html.EscapeString(in.SourceProvider) + `" placeholder="github or agentskill.sh"></label>
+		<label>Source URL <input name="source_url" type="url" value="` + html.EscapeString(in.SourceURL) + `" placeholder="https://github.com/owner/repo/tree/main/skill"></label></div>
 		<label class="check"><input name="recommended_default" type="checkbox"`)
 	if in.RecommendedDefault {
 		b.WriteString(` checked`)
@@ -1023,12 +1171,46 @@ func skillDetailPage(s *Skill, raw string) template.HTML {
 	} else {
 		b.WriteString(`<form class="inline-danger" method="post" action="/skills/` + html.EscapeString(id) + `/archive"><button class="link danger" type="submit">` + iconLabel("archive", "Archive skill") + `</button></form>`)
 	}
+	b.WriteString(`<form class="inline-danger" method="post" action="/skills/` + html.EscapeString(id) + `/delete" onsubmit="return confirm('Delete ` + html.EscapeString(id) + ` permanently? This cannot be undone.');"><button class="link danger" type="submit">` + iconLabel("trash", "Delete skill") + `</button></form>`)
 	recommended := "no"
 	if s.RecommendedDefault {
 		recommended = "yes"
 	}
-	b.WriteString(`<div class="split wide"><section class="rendered">` + simpleMarkdownHTML(bodyFromSkillMarkdown(raw)) + `</section><aside class="panel sticky"><div class="panel-head"><div class="panel-icon">` + icon("bolt") + `</div><div><h2>Install</h2><p>Copy this skill into the managed Codex target.</p></div></div><div class="command-card"><span>Codex</span><pre>skillsdex install ` + html.EscapeString(id) + ` --target codex</pre></div><div class="meta-list"><div><span>Name</span><strong>` + html.EscapeString(s.Name) + `</strong></div><div><span>Short description</span><strong>` + html.EscapeString(s.ShortDescription) + `</strong></div><div><span>Recommended default</span><strong>` + recommended + `</strong></div></div></aside></div>`)
+	source := sourceMetaHTML(s)
+	b.WriteString(`<section class="panel skill-install-panel"><div class="panel-head"><div class="panel-icon">` + icon("bolt") + `</div><div><h2>Install</h2><p>Copy this skill into the managed Codex target.</p></div></div><div class="command-card"><span>Codex</span><pre>skillsdex install ` + html.EscapeString(id) + ` --target codex</pre></div><div class="meta-list detail-meta"><div><span>Name</span><strong>` + html.EscapeString(s.Name) + `</strong></div><div><span>Short description</span><strong>` + html.EscapeString(s.ShortDescription) + `</strong></div>` + source + `<div><span>Recommended default</span><strong>` + recommended + `</strong></div></div></section><section class="rendered skill-body">` + simpleMarkdownHTML(bodyFromSkillMarkdown(raw)) + `</section>`)
 	return template.HTML(b.String())
+}
+
+func sourceMetaHTML(s *Skill) string {
+	if s.SourceProvider == "" && s.SourceURL == "" {
+		return `<div><span>Source</span><strong>Manual</strong></div>`
+	}
+	label := sourceProviderLabel(s.SourceProvider)
+	if s.SourceURL == "" || !safeHTTPURL(s.SourceURL) {
+		return `<div><span>Source</span><strong>` + html.EscapeString(label) + `</strong></div>`
+	}
+	return `<div><span>Source</span><strong><a href="` + html.EscapeString(s.SourceURL) + `" target="_blank" rel="noopener">` + html.EscapeString(label) + `</a></strong></div>`
+}
+
+func sourceProviderLabel(provider string) string {
+	switch strings.TrimSpace(provider) {
+	case "github":
+		return "GitHub"
+	case "agentskill.sh":
+		return "agentskill.sh"
+	case "":
+		return "Manual"
+	default:
+		return provider
+	}
+}
+
+func safeHTTPURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return u.Scheme == "https" || u.Scheme == "http"
 }
 
 func revisionsPage(owner, slug string, revs []SkillRevision) template.HTML {
@@ -1193,6 +1375,7 @@ pre { white-space: pre-wrap; overflow: auto; }
 .metrics strong { color: var(--text); }
 form { margin: 0; }
 label { display: grid; gap: 7px; margin-bottom: 15px; font-weight: 700; color: var(--text); }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 input, textarea { width: 100%; border: 1px solid var(--field-border); border-radius: 7px; padding: 11px 12px; font: inherit; background: var(--field); color: var(--text); box-shadow: inset 0 1px 0 var(--shadow-soft); }
 input:focus, textarea:focus, button:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-color: var(--accent); }
 textarea { resize: vertical; }
@@ -1251,6 +1434,7 @@ code { background: var(--soft); border: 1px solid var(--soft-border); border-rad
 .identifier { font-weight: 800; text-decoration: none; }
 .pill, .rev { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--soft-border); background: var(--soft); color: var(--text); font-size: 12px; font-weight: 800; }
 .pill.active { color: var(--ok); background: var(--ok-bg); border-color: var(--ok-line); }
+.pill.source { color: var(--accent-strong); background: var(--surface-3); border-color: var(--soft-border); }
 .pill.archived, .pill.revoked, .pill.deactivated { color: var(--warn); background: var(--warning-bg); border-color: var(--warning-line); }
 .token-cell code { display: block; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .empty { padding: 32px; text-align: center; color: var(--muted); }
@@ -1260,6 +1444,12 @@ code { background: var(--soft); border: 1px solid var(--soft-border); border-rad
 .meta-list { display: grid; gap: 12px; margin-top: 18px; }
 .meta-list div { display: grid; gap: 4px; padding-top: 12px; border-top: 1px solid var(--line); }
 .meta-list span { color: var(--muted); font-size: 12px; text-transform: uppercase; font-weight: 800; letter-spacing: .06em; }
+.skill-install-panel { margin-bottom: 18px; }
+.skill-install-panel .command-card { max-width: 620px; }
+.detail-meta { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.detail-meta div { min-width: 0; }
+.detail-meta strong { overflow-wrap: anywhere; }
+.skill-body { margin-top: 18px; }
 .icon { display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; flex: 0 0 auto; }
 .icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .panel-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 18px; }
@@ -1298,6 +1488,7 @@ code { background: var(--soft); border: 1px solid var(--soft-border); border-rad
 	main { padding: 18px; }
 	.split, .split.wide, .editor, .login-shell { grid-template-columns: 1fr; }
 	.help-intent-grid, .help-cards { grid-template-columns: 1fr; }
+	.form-grid { grid-template-columns: 1fr; gap: 0; }
 	.inline-search { grid-template-columns: 1fr; }
 	.pagehead { display: block; padding: 20px; }
 	.page-art { display: none; }
@@ -1316,6 +1507,7 @@ code { background: var(--soft); border: 1px solid var(--soft-border); border-rad
 	td:empty { display: none; }
 	td form { margin-top: 8px; }
 	.token-cell code { max-width: 220px; }
+	.detail-meta { grid-template-columns: 1fr; }
 	h1 { font-size: 26px; }
 	.login-brand h1 { font-size: 38px; }
 	.stack-card.primary, .stack-card.muted-card { transform: none; }

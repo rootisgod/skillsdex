@@ -52,11 +52,13 @@ func TestDefaultAdminAndTenantScopedSkills(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = createSkill(ctx, db, alice, SkillInput{
-		Owner:       "alice",
-		Slug:        "debugging",
-		Name:        "debugging",
-		Description: "Use when debugging.",
-		Body:        "# Debugging",
+		Owner:          "alice",
+		Slug:           "debugging",
+		Name:           "debugging",
+		Description:    "Use when debugging.",
+		SourceProvider: "github",
+		SourceURL:      "https://github.com/acme/skills/tree/main/debugging",
+		Body:           "# Debugging",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +72,9 @@ func TestDefaultAdminAndTenantScopedSkills(t *testing.T) {
 	}
 	if aliceSkill.RecommendedDefault {
 		t.Fatal("new user skill should not be recommended by default")
+	}
+	if aliceSkill.SourceProvider != "github" || aliceSkill.SourceURL != "https://github.com/acme/skills/tree/main/debugging" {
+		t.Fatalf("source metadata was not stored: %#v", aliceSkill)
 	}
 }
 
@@ -134,5 +139,58 @@ func TestRecommendedDefaultCanBeUnsetOnSeededSkill(t *testing.T) {
 	}
 	if skill.RecommendedDefault {
 		t.Fatal("seeded skill was re-marked recommended after user unset it")
+	}
+}
+
+func TestDeleteSkillRemovesRevisionsAndFiles(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	skill, err := createSkill(ctx, db, admin, SkillInput{
+		Owner:       "admin",
+		Slug:        "temporary",
+		Name:        "Temporary",
+		Description: "Use temporarily.",
+		Body:        "# Temporary",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := updateSkill(ctx, db, admin, "admin", "temporary", SkillInput{
+		Owner:       "admin",
+		Slug:        "temporary",
+		Name:        "Temporary",
+		Description: "Use temporarily.",
+		Body:        "# Temporary\n\nUpdated.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteSkill(ctx, db, admin.ID, "admin", "temporary"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := getSkill(ctx, db, admin.ID, "admin", "temporary"); !isNotFound(err) {
+		t.Fatalf("deleted skill should not be readable, err=%v", err)
+	}
+	var revisions int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM skill_revisions WHERE skill_id = ?`, skill.ID).Scan(&revisions); err != nil {
+		t.Fatal(err)
+	}
+	if revisions != 0 {
+		t.Fatalf("revision count after delete = %d, want 0", revisions)
+	}
+	var files int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM skill_revision_files WHERE revision_id NOT IN (SELECT id FROM skill_revisions)`).Scan(&files); err != nil {
+		t.Fatal(err)
+	}
+	if files != 0 {
+		t.Fatalf("orphaned revision file count = %d, want 0", files)
 	}
 }

@@ -130,6 +130,9 @@ func TestImportSkillInputsFromAgentSkill(t *testing.T) {
 	if got.Owner != "alice" || got.Slug != "openclaw-debugging" || got.Name != "openclaw-debugging" {
 		t.Fatalf("unexpected input identity: %#v", got)
 	}
+	if got.SourceProvider != "agentskill.sh" || got.SourceURL != "https://agentskill.sh/@openclaw/openclaw-debugging" {
+		t.Fatalf("unexpected source: %s %s", got.SourceProvider, got.SourceURL)
+	}
 	if strings.Contains(got.Body, "agentskill.sh") || got.Body != "# OpenClaw Debugging\n\nUse logs." {
 		t.Fatalf("body was not normalized: %q", got.Body)
 	}
@@ -204,7 +207,7 @@ func TestImportSkillInputsFromGitHubRoot(t *testing.T) {
 		case "https://api.github.com/repos/acme/skills/contents":
 			return testResponse(http.StatusOK, `[{"name":"workflow","path":"workflow","type":"dir"},{"name":"notes","path":"notes","type":"dir"}]`), nil
 		case "https://api.github.com/repos/acme/skills/contents/workflow/SKILL.md":
-			return testResponse(http.StatusOK, `{"name":"SKILL.md","path":"workflow/SKILL.md","type":"file","download_url":"https://raw.githubusercontent.com/acme/skills/main/workflow/SKILL.md"}`), nil
+			return testResponse(http.StatusOK, `{"name":"SKILL.md","path":"workflow/SKILL.md","type":"file","download_url":"https://raw.githubusercontent.com/acme/skills/main/workflow/SKILL.md","html_url":"https://github.com/acme/skills/blob/main/workflow/SKILL.md"}`), nil
 		case "https://api.github.com/repos/acme/skills/contents/notes/SKILL.md":
 			return testResponse(http.StatusNotFound, `{"message":"Not Found"}`), nil
 		case "https://raw.githubusercontent.com/acme/skills/main/workflow/SKILL.md":
@@ -224,6 +227,9 @@ func TestImportSkillInputsFromGitHubRoot(t *testing.T) {
 	}
 	if inputs[0].Owner != "alice" || inputs[0].Slug != "workflow" || !strings.Contains(inputs[0].Body, "# Workflow") {
 		t.Fatalf("unexpected input: %#v", inputs[0])
+	}
+	if inputs[0].SourceProvider != "github" || inputs[0].SourceURL != "https://github.com/acme/skills/blob/main/workflow/SKILL.md" {
+		t.Fatalf("unexpected source: %s %s", inputs[0].SourceProvider, inputs[0].SourceURL)
 	}
 }
 

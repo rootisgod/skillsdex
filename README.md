@@ -45,6 +45,8 @@ In the web app:
 4. Open `API Tokens`.
 5. Generate a token.
 
+To dump your library, open `Skills` and choose `Export`. The download is a zip of every owned `SKILL.md`, including archived skills, plus a `skillsdex-export.json` manifest with revision and source metadata. It is intended as a backup/export, not a re-import format.
+
 Authenticate the CLI:
 
 ```bash
