@@ -128,6 +128,9 @@ func runShow(args []string) error {
 	s := resp.Skill
 	fmt.Printf("Identifier: %s/%s\nName: %s\nDescription: %s\nShort description: %s\nRevision: %d\nUpdated: %s\n",
 		s.OwnerSlug, s.Slug, s.Name, s.Description, s.ShortDescription, s.RevisionNumber, s.UpdatedAt.Format("2006-01-02 15:04"))
+	if s.PinnedInstall {
+		fmt.Println("Pinned install: yes")
+	}
 	if s.SourceProvider != "" || s.SourceURL != "" {
 		source := sourceProviderLabel(s.SourceProvider)
 		if s.SourceURL != "" {
@@ -185,6 +188,22 @@ func runInstallDefaults(args []string) error {
 	if err != nil {
 		return errors.New("usage: skillsdex install-defaults [--target codex]")
 	}
+	return installMatchingSkills(target, "recommended default", func(s Skill) bool {
+		return s.RecommendedDefault && s.ArchivedAt == ""
+	})
+}
+
+func runInstallPinned(args []string) error {
+	target, err := parseInstallDefaultsArgs(args)
+	if err != nil {
+		return errors.New("usage: skillsdex install-pinned [--target codex]")
+	}
+	return installMatchingSkills(target, "pinned", func(s Skill) bool {
+		return s.PinnedInstall && s.ArchivedAt == ""
+	})
+}
+
+func installMatchingSkills(target, label string, include func(Skill) bool) error {
 	client, err := authenticatedClient()
 	if err != nil {
 		return err
@@ -195,17 +214,17 @@ func runInstallDefaults(args []string) error {
 	if err := client.getJSON("/v1/skills", &list); err != nil {
 		return err
 	}
-	var defaults []Skill
+	var selected []Skill
 	for _, s := range list.Skills {
-		if s.RecommendedDefault && s.ArchivedAt == "" {
-			defaults = append(defaults, s)
+		if include(s) {
+			selected = append(selected, s)
 		}
 	}
-	sort.Slice(defaults, func(i, j int) bool {
-		return defaults[i].OwnerSlug+"/"+defaults[i].Slug < defaults[j].OwnerSlug+"/"+defaults[j].Slug
+	sort.Slice(selected, func(i, j int) bool {
+		return selected[i].OwnerSlug+"/"+selected[i].Slug < selected[j].OwnerSlug+"/"+selected[j].Slug
 	})
-	if len(defaults) == 0 {
-		fmt.Println("No recommended default skills found.")
+	if len(selected) == 0 {
+		fmt.Printf("No %s skills found.\n", label)
 		return nil
 	}
 	manifest, err := loadManifest()
@@ -213,7 +232,7 @@ func runInstallDefaults(args []string) error {
 		return err
 	}
 	installed := 0
-	for _, s := range defaults {
+	for _, s := range selected {
 		resp, err := client.fetchSkill(s.OwnerSlug, s.Slug)
 		if err != nil {
 			return err
@@ -226,7 +245,7 @@ func runInstallDefaults(args []string) error {
 	if err := saveManifest(manifest); err != nil {
 		return err
 	}
-	fmt.Printf("Installed %d recommended default skill(s).\n", installed)
+	fmt.Printf("Installed %d %s skill(s).\n", installed, label)
 	return nil
 }
 

@@ -60,6 +60,7 @@ func migrate(db *sql.DB) error {
 			description TEXT NOT NULL,
 			short_description TEXT,
 			recommended_default INTEGER NOT NULL DEFAULT 0,
+			pinned_install INTEGER NOT NULL DEFAULT 0,
 			source_provider TEXT,
 			source_url TEXT,
 			current_revision_id TEXT,
@@ -113,6 +114,9 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	if _, err := addColumnIfMissing(db, "skills", "source_url", "source_url TEXT"); err != nil {
+		return err
+	}
+	if _, err := addColumnIfMissing(db, "skills", "pinned_install", "pinned_install INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 	if err := ensureDefaultAdmin(db); err != nil {
@@ -646,7 +650,7 @@ func userForAPIToken(ctx context.Context, db *sql.DB, token string) (*User, erro
 }
 
 func listSkills(ctx context.Context, db *sql.DB, userID string, includeArchived bool) ([]Skill, error) {
-	q := `SELECT s.id, s.owner_type, s.owner_id, s.owner_slug, s.slug, s.name, s.description, COALESCE(s.short_description,''), s.recommended_default, COALESCE(s.source_provider,''), COALESCE(s.source_url,''), COALESCE(s.current_revision_id,''), COALESCE(r.revision_number,0), COALESCE(s.archived_at,''), s.created_at, s.updated_at
+	q := `SELECT s.id, s.owner_type, s.owner_id, s.owner_slug, s.slug, s.name, s.description, COALESCE(s.short_description,''), s.recommended_default, s.pinned_install, COALESCE(s.source_provider,''), COALESCE(s.source_url,''), COALESCE(s.current_revision_id,''), COALESCE(r.revision_number,0), COALESCE(s.archived_at,''), s.created_at, s.updated_at
 		FROM skills s LEFT JOIN skill_revisions r ON r.id = s.current_revision_id
 		WHERE s.owner_id = ?`
 	args := []any{userID}
@@ -671,7 +675,7 @@ func listSkills(ctx context.Context, db *sql.DB, userID string, includeArchived 
 }
 
 func getSkill(ctx context.Context, db *sql.DB, userID, owner, slug string) (*Skill, error) {
-	row := db.QueryRowContext(ctx, `SELECT s.id, s.owner_type, s.owner_id, s.owner_slug, s.slug, s.name, s.description, COALESCE(s.short_description,''), s.recommended_default, COALESCE(s.source_provider,''), COALESCE(s.source_url,''), COALESCE(s.current_revision_id,''), COALESCE(r.revision_number,0), COALESCE(s.archived_at,''), s.created_at, s.updated_at
+	row := db.QueryRowContext(ctx, `SELECT s.id, s.owner_type, s.owner_id, s.owner_slug, s.slug, s.name, s.description, COALESCE(s.short_description,''), s.recommended_default, s.pinned_install, COALESCE(s.source_provider,''), COALESCE(s.source_url,''), COALESCE(s.current_revision_id,''), COALESCE(r.revision_number,0), COALESCE(s.archived_at,''), s.created_at, s.updated_at
 		FROM skills s LEFT JOIN skill_revisions r ON r.id = s.current_revision_id
 		WHERE s.owner_id = ? AND s.owner_slug = ? AND s.slug = ?`, userID, owner, slug)
 	return scanSkill(row)
@@ -680,7 +684,7 @@ func getSkill(ctx context.Context, db *sql.DB, userID, owner, slug string) (*Ski
 func scanSkill(row scanner) (*Skill, error) {
 	var s Skill
 	var created, updated string
-	if err := row.Scan(&s.ID, &s.OwnerType, &s.OwnerID, &s.OwnerSlug, &s.Slug, &s.Name, &s.Description, &s.ShortDescription, &s.RecommendedDefault, &s.SourceProvider, &s.SourceURL, &s.CurrentRevisionID, &s.RevisionNumber, &s.ArchivedAt, &created, &updated); err != nil {
+	if err := row.Scan(&s.ID, &s.OwnerType, &s.OwnerID, &s.OwnerSlug, &s.Slug, &s.Name, &s.Description, &s.ShortDescription, &s.RecommendedDefault, &s.PinnedInstall, &s.SourceProvider, &s.SourceURL, &s.CurrentRevisionID, &s.RevisionNumber, &s.ArchivedAt, &created, &updated); err != nil {
 		return nil, err
 	}
 	s.CreatedAt = parseTime(created)
@@ -706,8 +710,8 @@ func createSkill(ctx context.Context, db *sql.DB, user *User, in SkillInput) (*S
 	now := nowUTC().Format(time.RFC3339)
 	skillID := newID("skl")
 	sourceProvider, sourceURL := normalizedSource(in)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO skills (id, owner_type, owner_id, owner_slug, slug, name, description, short_description, recommended_default, source_provider, source_url, created_at, updated_at) VALUES (?, 'user', ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
-		skillID, user.ID, user.Username, in.Slug, strings.TrimSpace(in.Name), strings.TrimSpace(in.Description), strings.TrimSpace(in.ShortDescription), boolInt(in.RecommendedDefault), sourceProvider, sourceURL, now, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO skills (id, owner_type, owner_id, owner_slug, slug, name, description, short_description, recommended_default, pinned_install, source_provider, source_url, created_at, updated_at) VALUES (?, 'user', ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
+		skillID, user.ID, user.Username, in.Slug, strings.TrimSpace(in.Name), strings.TrimSpace(in.Description), strings.TrimSpace(in.ShortDescription), boolInt(in.RecommendedDefault), boolInt(in.PinnedInstall), sourceProvider, sourceURL, now, now); err != nil {
 		return nil, err
 	}
 	revID, err := insertRevision(ctx, tx, skillID, 1, user.ID, in)
@@ -752,8 +756,8 @@ func updateSkill(ctx context.Context, db *sql.DB, user *User, owner, slug string
 	if err != nil {
 		return nil, err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE skills SET name = ?, description = ?, short_description = ?, recommended_default = ?, source_provider = NULLIF(?, ''), source_url = NULLIF(?, ''), current_revision_id = ?, updated_at = ? WHERE id = ?`,
-		strings.TrimSpace(in.Name), strings.TrimSpace(in.Description), strings.TrimSpace(in.ShortDescription), boolInt(in.RecommendedDefault), sourceProvider, sourceURL, revID, nowUTC().Format(time.RFC3339), s.ID)
+	_, err = tx.ExecContext(ctx, `UPDATE skills SET name = ?, description = ?, short_description = ?, recommended_default = ?, pinned_install = ?, source_provider = NULLIF(?, ''), source_url = NULLIF(?, ''), current_revision_id = ?, updated_at = ? WHERE id = ?`,
+		strings.TrimSpace(in.Name), strings.TrimSpace(in.Description), strings.TrimSpace(in.ShortDescription), boolInt(in.RecommendedDefault), boolInt(in.PinnedInstall), sourceProvider, sourceURL, revID, nowUTC().Format(time.RFC3339), s.ID)
 	if err != nil {
 		return nil, err
 	}

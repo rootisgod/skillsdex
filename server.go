@@ -429,6 +429,7 @@ type exportSkillMeta struct {
 	RevisionNumber     int    `json:"revision_number"`
 	Archived           bool   `json:"archived"`
 	RecommendedDefault bool   `json:"recommended_default"`
+	PinnedInstall      bool   `json:"pinned_install"`
 	SourceProvider     string `json:"source_provider,omitempty"`
 	SourceURL          string `json:"source_url,omitempty"`
 	Path               string `json:"path"`
@@ -464,6 +465,7 @@ func buildSkillsExport(ctx context.Context, db *sql.DB, u *User) ([]byte, error)
 			RevisionNumber:     s.RevisionNumber,
 			Archived:           s.ArchivedAt != "",
 			RecommendedDefault: s.RecommendedDefault,
+			PinnedInstall:      s.PinnedInstall,
 			SourceProvider:     s.SourceProvider,
 			SourceURL:          s.SourceURL,
 			Path:               skillPath,
@@ -532,7 +534,7 @@ func (a *app) handleSkillEdit(w http.ResponseWriter, r *http.Request, u *User, o
 		http.NotFound(w, r)
 		return
 	}
-	in := SkillInput{Owner: owner, Slug: slug, Name: s.Name, Description: s.Description, ShortDescription: s.ShortDescription, RecommendedDefault: s.RecommendedDefault, SourceProvider: s.SourceProvider, SourceURL: s.SourceURL, Body: bodyFromSkillMarkdown(string(raw))}
+	in := SkillInput{Owner: owner, Slug: slug, Name: s.Name, Description: s.Description, ShortDescription: s.ShortDescription, RecommendedDefault: s.RecommendedDefault, PinnedInstall: s.PinnedInstall, SourceProvider: s.SourceProvider, SourceURL: s.SourceURL, Body: bodyFromSkillMarkdown(string(raw))}
 	if r.Method == http.MethodGet {
 		a.render(w, r, u, "Edit Skill", skillFormPage("/skills/"+owner+"/"+slug+"/edit", false, in, ""))
 		return
@@ -640,6 +642,7 @@ func skillInputFromForm(r *http.Request, defaultOwner string) SkillInput {
 		Description:        strings.TrimSpace(r.FormValue("description")),
 		ShortDescription:   strings.TrimSpace(r.FormValue("short_description")),
 		RecommendedDefault: r.FormValue("recommended_default") == "on",
+		PinnedInstall:      r.FormValue("pinned_install") == "on",
 		SourceProvider:     strings.TrimSpace(r.FormValue("source_provider")),
 		SourceURL:          strings.TrimSpace(r.FormValue("source_url")),
 		SourceExplicit:     true,
@@ -956,12 +959,15 @@ func skillsPage(skills []Skill, archived bool) template.HTML {
 		if s.RecommendedDefault {
 			b.WriteString(`<div class="row-tags"><span class="pill active">recommended</span></div>`)
 		}
+		if s.PinnedInstall {
+			b.WriteString(`<div class="row-tags"><span class="pill pinned">pinned</span></div>`)
+		}
 		if s.SourceProvider != "" {
 			b.WriteString(`<div class="row-tags"><span class="pill source">` + html.EscapeString(sourceProviderLabel(s.SourceProvider)) + `</span></div>`)
 		}
 		b.WriteString(`</td><td><span class="rev">r` + fmt.Sprintf("%d", s.RevisionNumber) + `</span></td><td>` + s.UpdatedAt.Format("2006-01-02 15:04") + `</td><td><span class="pill ` + status + `">` + status + `</span></td></tr>`)
 	}
-	b.WriteString(`</tbody></table></section><aside class="panel sticky"><div class="panel-head"><div class="panel-icon">` + icon("bolt") + `</div><div><h2>Install Starter Skills</h2><p>Run the CLI from this machine after login.</p></div></div><div class="command-card"><span>Recommended defaults</span><pre>skillsdex install-defaults --target codex</pre></div><div class="command-card"><span>Single skill</span><pre>skillsdex install admin/five-advisor-review --target codex</pre></div><div class="command-card"><span>Sync managed installs</span><pre>skillsdex sync</pre></div></aside></div>`)
+	b.WriteString(`</tbody></table></section><aside class="panel sticky"><div class="panel-head"><div class="panel-icon">` + icon("bolt") + `</div><div><h2>Install Skills</h2><p>Run the CLI from a new machine after login.</p></div></div><div class="command-card"><span>Pinned install set</span><pre>skillsdex install-pinned --target codex</pre></div><div class="command-card"><span>Recommended defaults</span><pre>skillsdex install-defaults --target codex</pre></div><div class="command-card"><span>Single skill</span><pre>skillsdex install admin/five-advisor-review --target codex</pre></div><div class="command-card"><span>Sync managed installs</span><pre>skillsdex sync</pre></div></aside></div>`)
 	return template.HTML(b.String())
 }
 
@@ -1154,6 +1160,11 @@ func skillFormPage(action string, create bool, in SkillInput, msg string) templa
 		b.WriteString(` checked`)
 	}
 	b.WriteString(`> Recommended default</label>
+		<label class="check"><input name="pinned_install" type="checkbox"`)
+	if in.PinnedInstall {
+		b.WriteString(` checked`)
+	}
+	b.WriteString(`> Pinned install</label>
 		<label>Markdown body <textarea name="body" rows="20" required>` + html.EscapeString(in.Body) + `</textarea></label>
 		<div class="actions"><button name="action" value="save" type="submit">` + iconLabel("edit", "Save Revision") + `</button><button class="secondary" name="action" value="preview" type="submit">Preview</button></div></section><aside class="panel preview-pane"><div class="panel-head"><div class="panel-icon">` + icon("code") + `</div><div><h2>Generated SKILL.md</h2><p>What will be stored for this revision.</p></div></div><pre class="raw">` + html.EscapeString(preview) + `</pre><h2>Rendered Preview</h2><div class="rendered mini">` + simpleMarkdownHTML(in.Body) + `</div></aside></form>`)
 	return template.HTML(b.String())
@@ -1176,8 +1187,12 @@ func skillDetailPage(s *Skill, raw string) template.HTML {
 	if s.RecommendedDefault {
 		recommended = "yes"
 	}
+	pinned := "no"
+	if s.PinnedInstall {
+		pinned = "yes"
+	}
 	source := sourceMetaHTML(s)
-	b.WriteString(`<section class="panel skill-install-panel"><div class="panel-head"><div class="panel-icon">` + icon("bolt") + `</div><div><h2>Install</h2><p>Copy this skill into the managed Codex target.</p></div></div><div class="command-card"><span>Codex</span><pre>skillsdex install ` + html.EscapeString(id) + ` --target codex</pre></div><div class="meta-list detail-meta"><div><span>Name</span><strong>` + html.EscapeString(s.Name) + `</strong></div><div><span>Short description</span><strong>` + html.EscapeString(s.ShortDescription) + `</strong></div>` + source + `<div><span>Recommended default</span><strong>` + recommended + `</strong></div></div></section><section class="rendered skill-body">` + simpleMarkdownHTML(bodyFromSkillMarkdown(raw)) + `</section>`)
+	b.WriteString(`<section class="panel skill-install-panel"><div class="panel-head"><div class="panel-icon">` + icon("bolt") + `</div><div><h2>Install</h2><p>Copy this skill into the managed Codex target.</p></div></div><div class="command-card"><span>Codex</span><pre>skillsdex install ` + html.EscapeString(id) + ` --target codex</pre></div><div class="meta-list detail-meta"><div><span>Name</span><strong>` + html.EscapeString(s.Name) + `</strong></div><div><span>Short description</span><strong>` + html.EscapeString(s.ShortDescription) + `</strong></div>` + source + `<div><span>Pinned install</span><strong>` + pinned + `</strong></div><div><span>Recommended default</span><strong>` + recommended + `</strong></div></div></section><section class="rendered skill-body">` + simpleMarkdownHTML(bodyFromSkillMarkdown(raw)) + `</section>`)
 	return template.HTML(b.String())
 }
 
@@ -1434,6 +1449,7 @@ code { background: var(--soft); border: 1px solid var(--soft-border); border-rad
 .identifier { font-weight: 800; text-decoration: none; }
 .pill, .rev { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--soft-border); background: var(--soft); color: var(--text); font-size: 12px; font-weight: 800; }
 .pill.active { color: var(--ok); background: var(--ok-bg); border-color: var(--ok-line); }
+.pill.pinned { color: var(--gold); background: var(--warning-bg); border-color: var(--warning-line); }
 .pill.source { color: var(--accent-strong); background: var(--surface-3); border-color: var(--soft-border); }
 .pill.archived, .pill.revoked, .pill.deactivated { color: var(--warn); background: var(--warning-bg); border-color: var(--warning-line); }
 .token-cell code { display: block; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1446,7 +1462,7 @@ code { background: var(--soft); border: 1px solid var(--soft-border); border-rad
 .meta-list span { color: var(--muted); font-size: 12px; text-transform: uppercase; font-weight: 800; letter-spacing: .06em; }
 .skill-install-panel { margin-bottom: 18px; }
 .skill-install-panel .command-card { max-width: 620px; }
-.detail-meta { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.detail-meta { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; }
 .detail-meta div { min-width: 0; }
 .detail-meta strong { overflow-wrap: anywhere; }
 .skill-body { margin-top: 18px; }

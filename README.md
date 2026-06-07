@@ -65,6 +65,12 @@ Install all recommended default skills into Codex:
 ./skillsdex install-defaults --target codex
 ```
 
+Install your pinned skill set on a new machine:
+
+```bash
+./skillsdex install-pinned --target codex
+```
+
 Or install a single skill:
 
 ```bash
@@ -123,7 +129,7 @@ Fresh installs seed useful starter skills under the `admin` namespace:
 - `admin/product-interface-redesign`
 - `admin/pull-request-summary`
 
-These seeded skills are marked as recommended defaults. You can edit a skill in the web app and toggle `Recommended default` to control whether `skillsdex install-defaults` includes it.
+These seeded skills are marked as recommended defaults. You can edit a skill in the web app and toggle `Recommended default` to control whether `skillsdex install-defaults` includes it. Toggle `Pinned install` for the personal subset you want `skillsdex install-pinned` to install on a new machine.
 
 ## What We Do Next
 

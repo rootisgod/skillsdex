@@ -56,6 +56,7 @@ func TestDefaultAdminAndTenantScopedSkills(t *testing.T) {
 		Slug:           "debugging",
 		Name:           "debugging",
 		Description:    "Use when debugging.",
+		PinnedInstall:  true,
 		SourceProvider: "github",
 		SourceURL:      "https://github.com/acme/skills/tree/main/debugging",
 		Body:           "# Debugging",
@@ -72,6 +73,9 @@ func TestDefaultAdminAndTenantScopedSkills(t *testing.T) {
 	}
 	if aliceSkill.RecommendedDefault {
 		t.Fatal("new user skill should not be recommended by default")
+	}
+	if !aliceSkill.PinnedInstall {
+		t.Fatal("pinned install metadata was not stored")
 	}
 	if aliceSkill.SourceProvider != "github" || aliceSkill.SourceURL != "https://github.com/acme/skills/tree/main/debugging" {
 		t.Fatalf("source metadata was not stored: %#v", aliceSkill)

@@ -278,6 +278,7 @@ func upsertImportedSkill(ctx context.Context, db *sql.DB, user *User, in SkillIn
 			return updated, "unchanged", err
 		}
 		in.RecommendedDefault = existing.RecommendedDefault
+		in.PinnedInstall = existing.PinnedInstall
 		updated, err := updateSkill(ctx, db, user, in.Owner, in.Slug, in)
 		return updated, "updated", err
 	} else if !isNotFound(err) {

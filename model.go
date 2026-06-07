@@ -22,6 +22,7 @@ type Skill struct {
 	Description        string    `json:"description"`
 	ShortDescription   string    `json:"short_description"`
 	RecommendedDefault bool      `json:"recommended_default"`
+	PinnedInstall      bool      `json:"pinned_install"`
 	SourceProvider     string    `json:"source_provider,omitempty"`
 	SourceURL          string    `json:"source_url,omitempty"`
 	CurrentRevisionID  string    `json:"latest_revision"`
@@ -71,6 +72,7 @@ type SkillInput struct {
 	Description        string `json:"description"`
 	ShortDescription   string `json:"short_description"`
 	RecommendedDefault bool   `json:"recommended_default"`
+	PinnedInstall      bool   `json:"pinned_install"`
 	SourceProvider     string `json:"source_provider,omitempty"`
 	SourceURL          string `json:"source_url,omitempty"`
 	SourceExplicit     bool   `json:"-"`
