@@ -236,6 +236,93 @@ func TestSkillTagsPersistAndFilterOnlyLists(t *testing.T) {
 	}
 }
 
+func TestSourceProvenanceBackfillFromExistingSourceURLs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "skillsdex.db")
+	db, err := openDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []SkillInput{
+		{
+			Owner:          "admin",
+			Slug:           "github-blob",
+			Name:           "GitHub Blob",
+			Description:    "Use when testing GitHub blob provenance.",
+			SourceProvider: "github",
+			SourceURL:      "https://github.com/Jeffallan/claude-skills/blob/main/skills/golang-pro/SKILL.md",
+			SourceExplicit: true,
+			Body:           "# GitHub Blob\n",
+		},
+		{
+			Owner:          "admin",
+			Slug:           "github-raw",
+			Name:           "GitHub Raw",
+			Description:    "Use when testing raw GitHub provenance.",
+			SourceURL:      "https://raw.githubusercontent.com/Jeffallan/claude-skills/main/skills/golang-pro/SKILL.md",
+			SourceExplicit: true,
+			Body:           "# GitHub Raw\n",
+		},
+		{
+			Owner:          "admin",
+			Slug:           "agent-skill",
+			Name:           "Agent Skill",
+			Description:    "Use when testing agentskill provenance.",
+			SourceProvider: "agentskill.sh",
+			SourceURL:      "https://agentskill.sh/@openclaw/openclaw-debugging",
+			SourceExplicit: true,
+			Body:           "# Agent Skill\n",
+		},
+		{
+			Owner:          "admin",
+			Slug:           "preserved-author",
+			Name:           "Preserved Author",
+			Description:    "Use when testing provenance preservation.",
+			SourceProvider: "github",
+			SourceURL:      "https://github.com/acme/skills/tree/main/review",
+			SourceAuthor:   "custom-author",
+			SourceExplicit: true,
+			Body:           "# Preserved Author\n",
+		},
+	}
+	for _, in := range cases {
+		if _, err := createSkill(ctx, db, admin, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = openDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	admin, err = getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSource := func(slug, provider, author, name, sourcePath, ref string) {
+		t.Helper()
+		skill, err := getSkill(ctx, db, admin.ID, "admin", slug)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if skill.SourceProvider != provider || skill.SourceAuthor != author || skill.SourceName != name || skill.SourcePath != sourcePath || skill.SourceRef != ref {
+			t.Fatalf("%s source = provider:%q author:%q name:%q path:%q ref:%q", slug, skill.SourceProvider, skill.SourceAuthor, skill.SourceName, skill.SourcePath, skill.SourceRef)
+		}
+	}
+	assertSource("github-blob", "github", "Jeffallan", "claude-skills", "skills/golang-pro/SKILL.md", "main")
+	assertSource("github-raw", "github", "Jeffallan", "claude-skills", "skills/golang-pro/SKILL.md", "main")
+	assertSource("agent-skill", "agentskill.sh", "openclaw", "openclaw-debugging", "openclaw/openclaw-debugging", "")
+	assertSource("preserved-author", "github", "custom-author", "skills", "review/SKILL.md", "main")
+}
+
 func TestAPITokensAreStoredHashedAndPreviewed(t *testing.T) {
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
 	if err != nil {

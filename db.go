@@ -188,6 +188,9 @@ func migrate(db *sql.DB) error {
 	if _, err := addColumnIfMissing(db, "skills", "source_ref", "source_ref TEXT"); err != nil {
 		return err
 	}
+	if err := backfillSourceProvenance(db); err != nil {
+		return err
+	}
 	if _, err := addColumnIfMissing(db, "skills", "pinned_install", "pinned_install INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
@@ -247,6 +250,105 @@ func migrateAPITokenHashes(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+func backfillSourceProvenance(db *sql.DB) error {
+	rows, err := db.Query(`SELECT id, COALESCE(source_provider,''), COALESCE(source_url,''), COALESCE(source_author,''), COALESCE(source_name,''), COALESCE(source_path,''), COALESCE(source_ref,'')
+		FROM skills
+		WHERE COALESCE(source_url,'') <> ''`)
+	if err != nil {
+		return err
+	}
+	type pendingSkill struct {
+		id     string
+		source sourceMetadata
+	}
+	var pending []pendingSkill
+	for rows.Next() {
+		var p pendingSkill
+		if err := rows.Scan(&p.id, &p.source.Provider, &p.source.URL, &p.source.Author, &p.source.Name, &p.source.Path, &p.source.Ref); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		pending = append(pending, p)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, skill := range pending {
+		inferred, ok := inferSourceProvenance(skill.source.Provider, skill.source.URL)
+		if !ok {
+			continue
+		}
+		next := skill.source
+		changed := fillMissingSourceField(&next.Provider, inferred.Provider)
+		changed = fillMissingSourceField(&next.Author, inferred.Author) || changed
+		changed = fillMissingSourceField(&next.Name, inferred.Name) || changed
+		changed = fillMissingSourceField(&next.Path, inferred.Path) || changed
+		changed = fillMissingSourceField(&next.Ref, inferred.Ref) || changed
+		if !changed {
+			continue
+		}
+		if _, err := db.Exec(`UPDATE skills SET source_provider = NULLIF(?, ''), source_author = NULLIF(?, ''), source_name = NULLIF(?, ''), source_path = NULLIF(?, ''), source_ref = NULLIF(?, '') WHERE id = ?`,
+			next.Provider, next.Author, next.Name, next.Path, next.Ref, skill.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func fillMissingSourceField(dst *string, value string) bool {
+	if strings.TrimSpace(*dst) != "" || strings.TrimSpace(value) == "" {
+		return false
+	}
+	*dst = strings.TrimSpace(value)
+	return true
+}
+
+func inferSourceProvenance(provider, sourceURL string) (sourceMetadata, bool) {
+	provider = strings.TrimSpace(provider)
+	sourceURL = strings.TrimSpace(sourceURL)
+	if sourceURL == "" {
+		return sourceMetadata{}, false
+	}
+	if provider == "" || provider == "github" {
+		if source, err := parseGitHubSource(sourceURL); err == nil {
+			return sourceMetadata{
+				Provider: "github",
+				Author:   source.Owner,
+				Name:     source.Repo,
+				Path:     githubSourceSkillPath(source),
+				Ref:      source.Ref,
+			}, true
+		}
+	}
+	if provider == "" || provider == "agentskill.sh" {
+		if source, err := parseAgentSkillSource(sourceURL); err == nil {
+			owner, name, _ := strings.Cut(source.Slug, "/")
+			return sourceMetadata{
+				Provider: "agentskill.sh",
+				Author:   owner,
+				Name:     name,
+				Path:     source.Slug,
+			}, true
+		}
+	}
+	return sourceMetadata{}, false
+}
+
+func githubSourceSkillPath(source githubSource) string {
+	sourcePath := strings.Trim(source.Path, "/")
+	if sourcePath == "" {
+		return ""
+	}
+	if source.Raw || strings.EqualFold(path.Base(sourcePath), "SKILL.md") {
+		return sourcePath
+	}
+	return path.Join(sourcePath, "SKILL.md")
 }
 
 func addColumnIfMissing(db *sql.DB, table, column, definition string) (bool, error) {
