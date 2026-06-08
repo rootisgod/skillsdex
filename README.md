@@ -37,44 +37,146 @@ username: admin
 password: admin
 ```
 
+The first `admin/admin` login is redirected to `Setup > Change Password`; replace the default password before continuing.
+
 In the web app:
 
 1. Log in as `admin`.
-2. Open `Skills`.
+2. Change the default password if prompted, then open `Setup` for the guided first-run checklist.
 3. Create a skill, import one from GitHub, or open `Top Skills` to import from agentskill.sh.
-4. Open `API Tokens`.
-5. Generate a token.
+4. Open `Collections` to create a named install set for a machine, workflow, client, or project type.
+5. Open `API Tokens`.
+6. Generate a token and copy it before leaving the page.
 
-To dump your library, open `Skills` and choose `Export`. The download is a zip of every owned `SKILL.md`, including archived skills, plus a `skillsdex-export.json` manifest with revision and source metadata. It is intended as a backup/export, not a re-import format.
+To dump your library, open `Skills` and choose `Export`. The download is a zip of every owned skill package, including archived skills, plus a `skillsdex-export.json` manifest with revision and source metadata. To restore it, open `Import`, choose `Restore Backup`, and upload the zip.
+
+The same backup path is available from the CLI:
+
+```bash
+./skillsdex backup export --out ./skillsdex-backup.zip
+./skillsdex backup inspect --file ./skillsdex-backup.zip
+./skillsdex backup inspect --file ./skillsdex-backup.zip --json
+./skillsdex backup restore --file ./skillsdex-backup.zip --dry-run
+./skillsdex backup restore --file ./skillsdex-backup.zip
+```
+
+`backup inspect` and `backup restore --dry-run` validate the zip locally and summarize active, archived, pinned, recommended, source-backed, and supporting-file counts before you upload or restore it. Add `--json` to either local validation command when scripts need structured output.
+
+For a repository-friendly one-way export, choose `GitHub Export` or run:
+
+```bash
+./skillsdex github export --dir ./skills-export --yes
+```
+
+That writes a `skills/<owner>/<slug>/SKILL.md` tree plus any supporting files and a README that can be committed to GitHub. SkillsDex remains the source of truth; this is intentionally not bidirectional sync.
 
 Authenticate the CLI:
 
 ```bash
+printf '%s\n' "$SKILLSDEX_TOKEN" | ./skillsdex login --server http://127.0.0.1:8765 --token-stdin
 ./skillsdex login --server http://127.0.0.1:8765 --token <token>
 ```
+
+API tokens are shown once when created. After that, the web app stores only a hash and displays a short preview so you can identify and revoke the token later.
+
+Preview the local onboarding plan:
+
+```bash
+./skillsdex setup
+./skillsdex setup --set laptop
+./skillsdex setup --set laptop --json
+```
+
+`setup` checks the server, chooses a single non-empty install set when one exists, otherwise falls back to pinned skills and then recommended defaults. It previews file writes by default; add `--apply --yes` after reviewing the plan. Add `--json` for a preview-only setup plan with the selected source, apply command, and follow-up trust gates. Both preview and apply modes end with a quality gate plus backup export and restore dry-run commands so the first-run loop includes discoverability and source-of-truth checks.
 
 List available skills:
 
 ```bash
 ./skillsdex skills
+./skillsdex skills --json
+./skillsdex show admin/five-advisor-review
+./skillsdex show admin/five-advisor-review --file references/guide.md
+./skillsdex show admin/five-advisor-review --raw
+./skillsdex mark admin/five-advisor-review --pinned --apply --yes
+./skillsdex mark admin/five-advisor-review --recommended --apply --yes
+./skillsdex lint --all
+./skillsdex lint admin/five-advisor-review
+./skillsdex lint --file ./my-skill
+./skillsdex lint --file ~/.codex/skills/admin--five-advisor-review/SKILL.md
+./skillsdex lint --json --strict --file ~/.codex/skills/admin--five-advisor-review/SKILL.md
+```
+
+`show --file` prints one stored package file, including supporting files from full skill folders, without the metadata summary.
+
+`mark` updates install flags without changing skill package content. Use `--pinned` or `--recommended` to add a skill to first-run install flows; use `--unpinned` or `--not-recommended` to remove it. It previews by default unless you add `--apply`.
+
+Use `lint --all --json --strict` as a library-wide quality gate before exporting, syncing a new machine, or publishing a skill pack. `lint --file` accepts either a `SKILL.md` file or a full skill folder, and folder linting checks supporting files for large context, sensitive material, non-executable scripts, and non-standard package locations.
+
+Search public agentskill.sh skills from the CLI:
+
+```bash
+./skillsdex search "code review"
+./skillsdex top --limit 20
+./skillsdex import-source @openclaw/openclaw-debugging
+./skillsdex import-source @openclaw/openclaw-debugging --install --dry-run
+./skillsdex import-source @openclaw/openclaw-debugging --install --yes
+```
+
+`import-source --install` imports the source into your library, then installs the successfully imported skill package through the same managed-file protections as `install`. `--dry-run` previews only the local install step; the library import still happens.
+
+Publish a local `SKILL.md` or full skill folder into SkillsDex:
+
+```bash
+./skillsdex templates
+./skillsdex new ./my-skill --template workflow --with-folders
+./skillsdex publish ./my-skill
+./skillsdex publish ./my-skill --apply --yes
+./skillsdex publish ./SKILL.md --slug local-review --strict
+```
+
+`templates` lists the reusable scaffold templates. `new` scaffolds a local skill folder from the same workflow, review, and research templates used by the web editor. `publish` previews by default, lints before writing, lists included package files, preserves supporting files from skill folders, and creates or updates the matching library skill only with `--apply`. Folder publishes skip and report common local metadata and secret-prone files such as `.git/`, `.vscode/`, `node_modules/`, `.env`, and `.DS_Store`; keep intentional assets under package paths such as `references/`, `scripts/`, `assets/`, or `templates/`.
+
+Preview upstream changes for imported GitHub or agentskill.sh skills:
+
+```bash
+./skillsdex refresh admin/five-advisor-review
+./skillsdex refresh admin/five-advisor-review --diff
+./skillsdex refresh admin/five-advisor-review --json
+./skillsdex refresh --all
+./skillsdex refresh --all --strict
+./skillsdex refresh --all --apply --yes
 ```
 
 Install all recommended default skills into Codex:
 
 ```bash
-./skillsdex install-defaults --target codex
+./skillsdex config set default_target codex
+./skillsdex install-defaults --dry-run
+./skillsdex install-defaults
 ```
 
 Install your pinned skill set on a new machine:
 
 ```bash
-./skillsdex install-pinned --target codex
+./skillsdex install-pinned --dry-run
+./skillsdex install-pinned
+```
+
+Install a named collection:
+
+```bash
+./skillsdex sets
+./skillsdex sets laptop
+./skillsdex sets laptop --json
+./skillsdex install-set laptop --dry-run
+./skillsdex install-set laptop
 ```
 
 Or install a single skill:
 
 ```bash
-./skillsdex install admin/five-advisor-review --target codex
+./skillsdex install admin/five-advisor-review --dry-run
+./skillsdex install admin/five-advisor-review
 ```
 
 The Codex skill is written to:
@@ -83,23 +185,146 @@ The Codex skill is written to:
 ~/.codex/skills/admin--five-advisor-review/SKILL.md
 ```
 
+If the skill has supporting files such as `references/`, `scripts/`, `assets/`, or `templates/`, they are installed beside `SKILL.md` inside the same managed skill folder. The local manifest tracks every managed package file, so `skillsdex sync` updates supporting files and removes stale managed files as upstream revisions change.
+
+Install dry-runs list the package files that would be written, including executable supporting files, and preview overwrite/removal diffs without prompting or writing files.
+
+Executable flags are preserved for supporting files, but SkillsDex does not execute package scripts. New executable supporting files require confirmation unless you pass `--yes`; use `--no` to decline without prompting.
+
 Sync managed installs:
 
 ```bash
 ./skillsdex sync
 ```
 
+Preview sync changes without writing files:
+
+```bash
+./skillsdex sync --dry-run
+./skillsdex sync --dry-run --strict
+./skillsdex sync --dry-run --json
+```
+
+Dry-run sync prints file-level added, modified, and removed package paths before any write. When changes are pending, it ends with the apply command to run after review. Add `--strict` when scripts should exit nonzero if any managed install would change. Add `--json` with `--dry-run` when automation needs per-install status, file changes, pending counts, failure counts, and next steps without parsing human output.
+
+If a managed skill is unavailable, archived, or has an invalid package, `sync` reports every affected skill, continues checking the rest, saves any successful updates, and exits nonzero so scripts can catch the problem.
+
+Overwrite prompts are interactive by default. For scripts, use `--yes` to allow overwrites or `--no` to decline them without prompting:
+
+```bash
+./skillsdex sync --yes
+./skillsdex install admin/five-advisor-review --no
+```
+
 Inspect local install status:
 
 ```bash
 ./skillsdex installed
+./skillsdex installed --refresh
+./skillsdex installed --strict
+./skillsdex installed --json
 ```
+
+Use `installed --refresh` to also dry-run source refresh checks for managed imported skills. Use `installed --strict` in scripts to exit nonzero when there are no managed installs, when local or reachable remote install status is not clean, or when `--refresh` finds an upstream source update. Add `--json` when scripts need install rows, status counts, source-refresh counts, and issue totals without parsing the table.
+
+Check local health and next steps:
+
+```bash
+./skillsdex doctor
+./skillsdex doctor --strict
+./skillsdex doctor --refresh --strict
+./skillsdex doctor --fix-permissions
+./skillsdex doctor --json
+```
+
+`doctor` checks authentication, server reachability, managed install status, Codex target writability, and whether local SkillsDex auth/manifest files are private. Authenticated runs end with quality, sync, and backup verification next steps. Add `--refresh` to also dry-run source refresh checks for managed imported skills. Add `--strict` in scripts to exit nonzero when any health check needs attention, including a machine with no managed installs yet or an upstream source update found with `--refresh`. Add `--json` when CI or setup scripts need the health report, issue list, and next steps as structured output. Use `--fix-permissions` to chmod existing auth and manifest files back to `0600`.
+
+Remove a managed install:
+
+```bash
+./skillsdex uninstall admin/five-advisor-review
+```
+
+Uninstall removes the tracked package files and keeps the same local-edit protection used by sync.
 
 Stop a local development server on port `8765`:
 
 ```bash
 task kill
 ```
+
+## Deployment
+
+Install a locally built binary:
+
+```bash
+go build -o skillsdex .
+scripts/install.sh ./skillsdex
+```
+
+Or choose a custom install path:
+
+```bash
+PREFIX="$HOME/.local" scripts/install.sh ./skillsdex
+```
+
+Run with Docker:
+
+```bash
+docker compose up --build
+```
+
+The container runs as a non-root user, stores the SQLite database under the `skillsdex-data` volume, and publishes `http://127.0.0.1:8765` by default. The first login is still `admin/admin` and is forced through the password-change setup page.
+
+Run under systemd on a Linux host:
+
+```bash
+sudo install -m 0755 skillsdex /usr/local/bin/skillsdex
+sudo install -m 0644 deploy/skillsdex.service /etc/systemd/system/skillsdex.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now skillsdex
+```
+
+The unit binds to `127.0.0.1:8765`, stores data in `/var/lib/skillsdex`, and is intended to sit behind a local browser session or a TLS-terminating reverse proxy.
+
+If the only admin password is lost, stop the service and reset it with local database access:
+
+```bash
+skillsdex admin reset-password --db /var/lib/skillsdex/skillsdex.db --username admin --password <new-password>
+```
+
+The reset requires an admin user, enforces the normal password length rule, revokes existing web sessions and API tokens for that user, and records an audit event.
+
+Admins can also open `Admin > Maintenance` to prune expired web sessions, revoked API token metadata, and old audit events. Retention pruning never deletes skills, revisions, users, install sets, or backups, and each prune records an aggregate audit event.
+
+Build release archives:
+
+```bash
+VERSION=0.1.0 task release
+```
+
+The release task writes platform archives under `dist/` and a `dist/SHA256SUMS` manifest. Verify downloaded archives with:
+
+```bash
+cd dist && shasum -a 256 -c SHA256SUMS
+```
+
+Generate a Homebrew formula from the same release artifacts:
+
+```bash
+VERSION=0.1.0 task release
+VERSION=0.1.0 task homebrew-formula
+```
+
+The formula is written to `dist/homebrew/Formula/skillsdex.rb` and defaults to GitHub release URLs under `https://github.com/rootisgod/skillsdex/releases/download/v<version>/`. For forks, private taps, or alternate asset hosts, set `RELEASE_BASE_URL`, `RELEASE_TAG`, and `HOMEBREW_HOMEPAGE`.
+
+Signed release artifacts use minisign and require a maintainer signing key:
+
+```bash
+MINISIGN_KEY_FILE=./minisign.key VERSION=0.1.0 task release-signed
+```
+
+That signs `SHA256SUMS` and each release archive beside the generated files.
 
 ## Importing Skills
 
@@ -111,7 +336,29 @@ The web app can import a Codex-compatible `SKILL.md` from:
 
 The `Import` page also includes agentskill.sh search. The `Top Skills` page shows the top 100 agentskill.sh skills with sortable quality, security, and GitHub stars columns.
 
-V0 still stores and installs only `SKILL.md`; additional files returned by external registries are ignored until full skill-folder support is added.
+The CLI can use the same authenticated server-side import path:
+
+```bash
+./skillsdex search "playwright"
+./skillsdex top --limit 10
+./skillsdex import-source https://github.com/owner/repo/tree/main/skill-name
+./skillsdex import-source @owner/skill-name
+```
+
+Imported skill detail pages include `Refresh Source` when source metadata is available. The browser flow previews added/modified/removed package files with file diffs, then `Apply Source Update` saves a normal revision only when you confirm. Refresh pulls the latest upstream skill package and preserves local pinned/default install flags. The same path is available from the CLI with `skillsdex refresh`, which previews by default, shows added/modified/removed package files, can print diffs with `--diff`, and updates only with `--apply`.
+For `refresh --all`, any per-skill refresh failure is printed and the command exits nonzero after checking the remaining skills. Add `--strict` to a preview command when scripts should also fail if any imported skill has an upstream update available. Add `--json` to a preview command when automation needs source-refresh status counts, file changes, failures, and next steps without parsing human output.
+
+SkillsDex export zips can be restored from the same `Import` page. Restore validates every manifest path and package file path, rejects traversal or absolute paths, restores pinned/default/source metadata, and recreates archived skills as archived.
+
+GitHub folder imports and GitHub Export preserve supporting files under the skill directory. GitHub Export is one-way: it writes active and archived skills under `skills/<owner>/<slug>/` for review, backup, or publishing, but does not import Git commits back into SkillsDex.
+
+Skill detail pages show text previews for supporting files, and revision pages diff the full package file-by-file so upstream refreshes and folder changes can be reviewed in the browser.
+
+## Authoring
+
+The web editor keeps frontmatter fields separate from the Markdown body and shows the generated `SKILL.md` before save. It progressively enhances the form with local live `SKILL.md`, rendered-preview, and quality-signal updates, body/description counters, and Markdown textarea tab indentation while keeping create/edit/save usable without JavaScript. It can add, edit, remove, and mark supporting package files executable, so a full skill folder can be authored without leaving the browser. New skills can start from workflow, review, or research templates.
+
+SkillsDex also shows local quality signals for each draft and skill detail page, including weak trigger descriptions, suggested trigger rewrites, missing short descriptions, sparse instructions, very large loaded context, possible duplicates, stale imported sources, TODO placeholders, and possible sensitive terms.
 
 ## Default Skills
 
@@ -131,6 +378,19 @@ Fresh installs seed useful starter skills under the `admin` namespace:
 
 These seeded skills are marked as recommended defaults. You can edit a skill in the web app and toggle `Recommended default` to control whether `skillsdex install-defaults` includes it. Toggle `Pinned install` for the personal subset you want `skillsdex install-pinned` to install on a new machine.
 
+## Collections
+
+Collections are named install sets. Use them when pinned/default is too coarse: for example `laptop`, `workstation`, `client-acme`, `frontend`, or `incident-response`.
+
+Create and manage collections in the web app under `Collections`, then install one from any authenticated machine:
+
+```bash
+./skillsdex sets
+./skillsdex sets laptop
+./skillsdex sets laptop --json
+./skillsdex install-set laptop
+```
+
 ## What We Do Next
 
 Current context:
@@ -138,22 +398,36 @@ Current context:
 - Phase 1 implementation is in place as one `skillsdex` binary.
 - The default starter skill library is seeded into the `admin` namespace.
 - The web UI has been redesigned for clearer navigation, denser skill browsing, better install guidance, and light/dark themes.
-- GitHub and agentskill.sh imports are available in the web app, including agentskill.sh search and Top 100 browsing.
-- The CLI install/sync loop is the core product path and should stay the main polish target.
+- GitHub and agentskill.sh imports are available in the web app and CLI, including agentskill.sh search and Top 100 browsing.
+- Setup guidance, `skillsdex setup`, named install sets, CLI public search/import/new/publish/mark, CLI dry-runs, overwrite flags, source refresh, `doctor` health checks, and quality signals are available.
+- Quality signals are available in the web app and from `skillsdex lint`, including `--strict` and `--json` for scripts.
+- SkillsDex stores full skill packages, including `SKILL.md` plus supporting files, and the web editor, API, CLI install/sync/uninstall path, web previews/diffs, backup restore, GitHub import, and GitHub export preserve those package files.
+- SkillsDex export zips can be restored from the Import page or CLI with path validation and archived-skill preservation.
+- One-way GitHub export is available from the web app and CLI as a repo-shaped `skills/<owner>/<slug>/` tree.
+- The seeded `admin/admin` login is forced through a password-change setup screen before normal web routes are available.
+- API tokens are stored as hashes and shown only once. Authenticated web forms use per-session CSRF tokens, including backup uploads, and session cookies are marked `Secure` when served over HTTPS.
+- Admins can review `Admin > Audit` for recent login, password, token, skill, import/export, backup export/restore, install-set, retention, and local recovery changes.
+- Admins can prune expired sessions, revoked API token metadata, and old audit events from `Admin > Maintenance`.
+- Docker, systemd, install-script, checksummed release archives, optional minisign signatures, generated Homebrew formula packaging, and legacy database migration smoke coverage are available for more repeatable local or small-host deployments.
+- The CLI install/sync loop remains the core product path and should stay the main polish target.
 
-Near-term plan:
+Remaining high-level work:
 
-1. Test the complete flow from a clean home directory: `serve`, web login, token generation, CLI login, `skills`, `install`, `sync`, `installed`, and modified-file protection.
-2. Add a guided setup page or checklist in the web app so new users know how to generate a token and install their first skill.
-3. Make the theme toggle available before login, or add an equivalent compact control on the login page.
-4. Only after the install/sync loop is polished, revisit phase 2 items such as teams, GitHub export, and additional agent targets.
+1. Keep expanding the clean-home e2e smoke as new CLI and web flows are added.
+2. Continue hosted hardening with broader audit coverage for future team features.
+3. Exercise full-folder authoring against a real Codex install with references, scripts, assets, and templates.
+4. Exercise signed releases and Homebrew packaging in a real GitHub release/tap workflow.
+5. Revisit phase 2 items such as teams and additional agent targets after the single-user install/sync loop has had real use.
 
 ## Checks
 
 ```bash
 task test
 task build
+task e2e-first-run
 ```
+
+`task e2e-first-run` starts SkillsDex on `127.0.0.1:18765` with temporary `HOME`, `SKILLSDEX_HOME`, cookies, and SQLite state. It exercises the default login, forced password change, setup page, one-time web token generation, CLI login, `doctor`, `doctor --fix-permissions`, `doctor --strict`, `skills`, `templates`, `mark`, named set setup preview, install dry-runs, `install-defaults`, `installed`, file-level `sync --dry-run` previews, modified-file protection with `--no`/`--yes`, and CLI backup export/inspect/restore dry-runs/restore.
 
 Equivalent Go commands:
 

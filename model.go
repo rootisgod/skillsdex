@@ -3,13 +3,14 @@ package main
 import "time"
 
 type User struct {
-	ID            string
-	Username      string
-	PasswordHash  string
-	IsAdmin       bool
-	DeactivatedAt *time.Time
-	Email         string
-	CreatedAt     time.Time
+	ID                 string
+	Username           string
+	PasswordHash       string
+	IsAdmin            bool
+	MustChangePassword bool
+	DeactivatedAt      *time.Time
+	Email              string
+	CreatedAt          time.Time
 }
 
 type Skill struct {
@@ -55,14 +56,61 @@ type SkillRevisionFile struct {
 	CreatedAt   time.Time
 }
 
+type SkillFile struct {
+	Path        string `json:"path"`
+	Content     string `json:"content"`
+	ContentType string `json:"content_type"`
+	SizeBytes   int64  `json:"size_bytes"`
+	Executable  bool   `json:"executable"`
+}
+
+type SourceRefreshChange struct {
+	Path   string `json:"path"`
+	Status string `json:"status"`
+	Diff   string `json:"diff,omitempty"`
+}
+
 type APIToken struct {
-	ID         string
-	UserID     string
-	Name       string
-	Token      string
-	CreatedAt  time.Time
-	LastUsedAt string
-	RevokedAt  string
+	ID           string
+	UserID       string
+	Name         string
+	TokenPreview string
+	CreatedAt    time.Time
+	LastUsedAt   string
+	RevokedAt    string
+}
+
+type InstallSet struct {
+	ID          string    `json:"id"`
+	UserID      string    `json:"-"`
+	Slug        string    `json:"slug"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	SkillCount  int       `json:"skill_count"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type AuditEvent struct {
+	ID            string
+	ActorUserID   string
+	ActorUsername string
+	Action        string
+	TargetType    string
+	TargetID      string
+	TargetLabel   string
+	DetailJSON    string
+	RemoteAddr    string
+	UserAgent     string
+	CreatedAt     time.Time
+}
+
+type RetentionStats struct {
+	ExpiredSessions    int64
+	RevokedAPITokens   int64
+	OldAuditEvents     int64
+	AuditRetentionDays int
+	TokenRetentionDays int
 }
 
 type SkillInput struct {
@@ -77,4 +125,10 @@ type SkillInput struct {
 	SourceURL          string `json:"source_url,omitempty"`
 	SourceExplicit     bool   `json:"-"`
 	Body               string `json:"body"`
+	Files              []SkillFile
+}
+
+type SkillFlagUpdate struct {
+	RecommendedDefault *bool `json:"recommended_default,omitempty"`
+	PinnedInstall      *bool `json:"pinned_install,omitempty"`
 }

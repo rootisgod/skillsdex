@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -37,6 +39,7 @@ func migrate(db *sql.DB) error {
 			username TEXT NOT NULL UNIQUE,
 			password_hash TEXT NOT NULL,
 			is_admin INTEGER NOT NULL DEFAULT 0,
+			must_change_password INTEGER NOT NULL DEFAULT 0,
 			deactivated_at TEXT,
 			email TEXT UNIQUE,
 			created_at TEXT NOT NULL
@@ -46,6 +49,8 @@ func migrate(db *sql.DB) error {
 			user_id TEXT NOT NULL REFERENCES users(id),
 			name TEXT NOT NULL,
 			token TEXT NOT NULL UNIQUE,
+			token_hash TEXT NOT NULL DEFAULT '',
+			token_preview TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			last_used_at TEXT,
 			revoked_at TEXT
@@ -95,11 +100,44 @@ func migrate(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS web_sessions (
 			token TEXT PRIMARY KEY,
 			user_id TEXT NOT NULL REFERENCES users(id),
+			csrf_token TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			expires_at TEXT NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS install_sets (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL REFERENCES users(id),
+			slug TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			UNIQUE(user_id, slug)
+		);`,
+		`CREATE TABLE IF NOT EXISTS install_set_skills (
+			set_id TEXT NOT NULL REFERENCES install_sets(id) ON DELETE CASCADE,
+			skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+			position INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY(set_id, skill_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS audit_events (
+			id TEXT PRIMARY KEY,
+			actor_user_id TEXT REFERENCES users(id),
+			actor_username TEXT NOT NULL DEFAULT '',
+			action TEXT NOT NULL,
+			target_type TEXT NOT NULL DEFAULT '',
+			target_id TEXT NOT NULL DEFAULT '',
+			target_label TEXT NOT NULL DEFAULT '',
+			detail_json TEXT NOT NULL DEFAULT '{}',
+			remote_addr TEXT NOT NULL DEFAULT '',
+			user_agent TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL
+		);`,
 		`CREATE INDEX IF NOT EXISTS idx_skills_owner ON skills(owner_id, archived_at, updated_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_revisions_skill ON skill_revisions(skill_id, revision_number);`,
+		`CREATE INDEX IF NOT EXISTS idx_install_sets_user ON install_sets(user_id, updated_at);`,
+		`CREATE INDEX IF NOT EXISTS idx_install_set_skills_set ON install_set_skills(set_id, position);`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_events_created ON audit_events(created_at DESC);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -108,6 +146,9 @@ func migrate(db *sql.DB) error {
 	}
 	addedRecommendedDefault, err := addColumnIfMissing(db, "skills", "recommended_default", "recommended_default INTEGER NOT NULL DEFAULT 0")
 	if err != nil {
+		return err
+	}
+	if _, err := addColumnIfMissing(db, "users", "must_change_password", "must_change_password INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 	if _, err := addColumnIfMissing(db, "skills", "source_provider", "source_provider TEXT"); err != nil {
@@ -119,10 +160,62 @@ func migrate(db *sql.DB) error {
 	if _, err := addColumnIfMissing(db, "skills", "pinned_install", "pinned_install INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	if _, err := addColumnIfMissing(db, "api_tokens", "token_hash", "token_hash TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if _, err := addColumnIfMissing(db, "api_tokens", "token_preview", "token_preview TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := migrateAPITokenHashes(db); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash)`); err != nil {
+		return err
+	}
+	addedCSRF, err := addColumnIfMissing(db, "web_sessions", "csrf_token", "csrf_token TEXT NOT NULL DEFAULT ''")
+	if err != nil {
+		return err
+	}
+	if addedCSRF {
+		if _, err := db.Exec(`UPDATE web_sessions SET csrf_token = token WHERE csrf_token = ''`); err != nil {
+			return err
+		}
+	}
 	if err := ensureDefaultAdmin(db); err != nil {
 		return err
 	}
 	return ensureDefaultSkills(db, addedRecommendedDefault)
+}
+
+func migrateAPITokenHashes(db *sql.DB) error {
+	rows, err := db.Query(`SELECT id, token FROM api_tokens WHERE token_hash = ''`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type pendingToken struct {
+		id    string
+		token string
+	}
+	var pending []pendingToken
+	for rows.Next() {
+		var p pendingToken
+		if err := rows.Scan(&p.id, &p.token); err != nil {
+			return err
+		}
+		pending = append(pending, p)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, p := range pending {
+		hash := apiTokenHash(p.token)
+		preview := tokenPreview(p.token)
+		if _, err := db.Exec(`UPDATE api_tokens SET token = ?, token_hash = ?, token_preview = ? WHERE id = ?`, "stored:"+p.id, hash, preview, p.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func addColumnIfMissing(db *sql.DB, table, column, definition string) (bool, error) {
@@ -507,12 +600,12 @@ Keep it factual. Do not claim tests were run unless they were run. Mention any m
 }
 
 func getUserByUsername(ctx context.Context, db *sql.DB, username string) (*User, error) {
-	row := db.QueryRowContext(ctx, `SELECT id, username, password_hash, is_admin, COALESCE(deactivated_at,''), COALESCE(email,''), created_at FROM users WHERE username = ?`, username)
+	row := db.QueryRowContext(ctx, `SELECT id, username, password_hash, is_admin, must_change_password, COALESCE(deactivated_at,''), COALESCE(email,''), created_at FROM users WHERE username = ?`, username)
 	return scanUser(row)
 }
 
 func getUserByID(ctx context.Context, db *sql.DB, id string) (*User, error) {
-	row := db.QueryRowContext(ctx, `SELECT id, username, password_hash, is_admin, COALESCE(deactivated_at,''), COALESCE(email,''), created_at FROM users WHERE id = ?`, id)
+	row := db.QueryRowContext(ctx, `SELECT id, username, password_hash, is_admin, must_change_password, COALESCE(deactivated_at,''), COALESCE(email,''), created_at FROM users WHERE id = ?`, id)
 	return scanUser(row)
 }
 
@@ -523,7 +616,7 @@ type scanner interface {
 func scanUser(row scanner) (*User, error) {
 	var u User
 	var deactivated, created string
-	if err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.IsAdmin, &deactivated, &u.Email, &created); err != nil {
+	if err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.IsAdmin, &u.MustChangePassword, &deactivated, &u.Email, &created); err != nil {
 		return nil, err
 	}
 	u.DeactivatedAt = nullableTime(deactivated)
@@ -532,7 +625,7 @@ func scanUser(row scanner) (*User, error) {
 }
 
 func listUsers(ctx context.Context, db *sql.DB) ([]User, error) {
-	rows, err := db.QueryContext(ctx, `SELECT id, username, password_hash, is_admin, COALESCE(deactivated_at,''), COALESCE(email,''), created_at FROM users ORDER BY username`)
+	rows, err := db.QueryContext(ctx, `SELECT id, username, password_hash, is_admin, must_change_password, COALESCE(deactivated_at,''), COALESCE(email,''), created_at FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -546,6 +639,101 @@ func listUsers(ctx context.Context, db *sql.DB) ([]User, error) {
 		users = append(users, *u)
 	}
 	return users, rows.Err()
+}
+
+func createAuditEvent(ctx context.Context, db *sql.DB, event AuditEvent) error {
+	if strings.TrimSpace(event.Action) == "" {
+		return errors.New("audit action is required")
+	}
+	detail := strings.TrimSpace(event.DetailJSON)
+	if detail == "" {
+		detail = "{}"
+	}
+	_, err := db.ExecContext(ctx, `INSERT INTO audit_events (id, actor_user_id, actor_username, action, target_type, target_id, target_label, detail_json, remote_addr, user_agent, created_at) VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		newID("aud"), strings.TrimSpace(event.ActorUserID), strings.TrimSpace(event.ActorUsername), strings.TrimSpace(event.Action), strings.TrimSpace(event.TargetType), strings.TrimSpace(event.TargetID), strings.TrimSpace(event.TargetLabel), detail, strings.TrimSpace(event.RemoteAddr), strings.TrimSpace(event.UserAgent), nowUTC().Format(time.RFC3339))
+	return err
+}
+
+func listAuditEvents(ctx context.Context, db *sql.DB, limit int) ([]AuditEvent, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := db.QueryContext(ctx, `SELECT id, COALESCE(actor_user_id,''), actor_username, action, target_type, target_id, target_label, detail_json, remote_addr, user_agent, created_at FROM audit_events ORDER BY created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []AuditEvent
+	for rows.Next() {
+		var event AuditEvent
+		var created string
+		if err := rows.Scan(&event.ID, &event.ActorUserID, &event.ActorUsername, &event.Action, &event.TargetType, &event.TargetID, &event.TargetLabel, &event.DetailJSON, &event.RemoteAddr, &event.UserAgent, &created); err != nil {
+			return nil, err
+		}
+		event.CreatedAt = parseTime(created)
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
+func retentionStats(ctx context.Context, db *sql.DB, auditDays, tokenDays int) (RetentionStats, error) {
+	stats := RetentionStats{
+		AuditRetentionDays: auditDays,
+		TokenRetentionDays: tokenDays,
+	}
+	now := nowUTC().Format(time.RFC3339)
+	auditCutoff := nowUTC().AddDate(0, 0, -auditDays).Format(time.RFC3339)
+	tokenCutoff := nowUTC().AddDate(0, 0, -tokenDays).Format(time.RFC3339)
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM web_sessions WHERE expires_at <= ?`, now).Scan(&stats.ExpiredSessions); err != nil {
+		return RetentionStats{}, err
+	}
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_tokens WHERE revoked_at IS NOT NULL AND revoked_at <> '' AND revoked_at <= ?`, tokenCutoff).Scan(&stats.RevokedAPITokens); err != nil {
+		return RetentionStats{}, err
+	}
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE created_at <= ?`, auditCutoff).Scan(&stats.OldAuditEvents); err != nil {
+		return RetentionStats{}, err
+	}
+	return stats, nil
+}
+
+func pruneRetention(ctx context.Context, db *sql.DB, auditDays, tokenDays int) (RetentionStats, error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return RetentionStats{}, err
+	}
+	defer tx.Rollback()
+	now := nowUTC().Format(time.RFC3339)
+	auditCutoff := nowUTC().AddDate(0, 0, -auditDays).Format(time.RFC3339)
+	tokenCutoff := nowUTC().AddDate(0, 0, -tokenDays).Format(time.RFC3339)
+	stats := RetentionStats{
+		AuditRetentionDays: auditDays,
+		TokenRetentionDays: tokenDays,
+	}
+	if stats.ExpiredSessions, err = deleteCount(ctx, tx, `DELETE FROM web_sessions WHERE expires_at <= ?`, now); err != nil {
+		return RetentionStats{}, err
+	}
+	if stats.RevokedAPITokens, err = deleteCount(ctx, tx, `DELETE FROM api_tokens WHERE revoked_at IS NOT NULL AND revoked_at <> '' AND revoked_at <= ?`, tokenCutoff); err != nil {
+		return RetentionStats{}, err
+	}
+	if stats.OldAuditEvents, err = deleteCount(ctx, tx, `DELETE FROM audit_events WHERE created_at <= ?`, auditCutoff); err != nil {
+		return RetentionStats{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return RetentionStats{}, err
+	}
+	return stats, nil
+}
+
+func deleteCount(ctx context.Context, tx *sql.Tx, query string, args ...any) (int64, error) {
+	result, err := tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func createUser(ctx context.Context, db *sql.DB, username, email, password string, isAdmin bool) error {
@@ -570,12 +758,38 @@ func updateUser(ctx context.Context, db *sql.DB, id, email, password string, isA
 		if err != nil {
 			return err
 		}
-		_, err = db.ExecContext(ctx, `UPDATE users SET password_hash = ?, is_admin = ?, email = NULLIF(?, ''), deactivated_at = ? WHERE id = ?`,
+		_, err = db.ExecContext(ctx, `UPDATE users SET password_hash = ?, must_change_password = 0, is_admin = ?, email = NULLIF(?, ''), deactivated_at = ? WHERE id = ?`,
 			string(hash), boolInt(isAdmin), strings.TrimSpace(email), deactivatedAt(deactivated), id)
 		return err
 	}
 	_, err := db.ExecContext(ctx, `UPDATE users SET is_admin = ?, email = NULLIF(?, ''), deactivated_at = ? WHERE id = ?`,
 		boolInt(isAdmin), strings.TrimSpace(email), deactivatedAt(deactivated), id)
+	return err
+}
+
+func setUserMustChangePassword(ctx context.Context, db *sql.DB, userID string, required bool) error {
+	_, err := db.ExecContext(ctx, `UPDATE users SET must_change_password = ? WHERE id = ?`, boolInt(required), userID)
+	return err
+}
+
+func setUserPassword(ctx context.Context, db *sql.DB, userID, password string) error {
+	if len(strings.TrimSpace(password)) < 12 {
+		return errors.New("password must be at least 12 characters")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?`, string(hash), userID)
+	return err
+}
+
+func revokeUserAccess(ctx context.Context, db *sql.DB, userID string) error {
+	now := nowUTC().Format(time.RFC3339)
+	if _, err := db.ExecContext(ctx, `DELETE FROM web_sessions WHERE user_id = ?`, userID); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, `UPDATE api_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL`, now, userID)
 	return err
 }
 
@@ -588,14 +802,15 @@ func deactivatedAt(deactivated bool) any {
 
 func createWebSession(ctx context.Context, db *sql.DB, userID string) (string, error) {
 	token := newToken()
+	csrfToken := newToken()
 	now := nowUTC()
-	_, err := db.ExecContext(ctx, `INSERT INTO web_sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)`,
-		token, userID, now.Format(time.RFC3339), now.Add(30*24*time.Hour).Format(time.RFC3339))
+	_, err := db.ExecContext(ctx, `INSERT INTO web_sessions (token, user_id, csrf_token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`,
+		token, userID, csrfToken, now.Format(time.RFC3339), now.Add(30*24*time.Hour).Format(time.RFC3339))
 	return token, err
 }
 
 func userForSession(ctx context.Context, db *sql.DB, token string) (*User, error) {
-	row := db.QueryRowContext(ctx, `SELECT u.id, u.username, u.password_hash, u.is_admin, COALESCE(u.deactivated_at,''), COALESCE(u.email,''), u.created_at
+	row := db.QueryRowContext(ctx, `SELECT u.id, u.username, u.password_hash, u.is_admin, u.must_change_password, COALESCE(u.deactivated_at,''), COALESCE(u.email,''), u.created_at
 		FROM web_sessions s JOIN users u ON u.id = s.user_id
 		WHERE s.token = ? AND s.expires_at > ? AND u.deactivated_at IS NULL`, token, nowUTC().Format(time.RFC3339))
 	return scanUser(row)
@@ -606,15 +821,22 @@ func deleteWebSession(ctx context.Context, db *sql.DB, token string) error {
 	return err
 }
 
+func csrfTokenForSession(ctx context.Context, db *sql.DB, token string) (string, error) {
+	var csrfToken string
+	err := db.QueryRowContext(ctx, `SELECT csrf_token FROM web_sessions WHERE token = ? AND expires_at > ?`, token, nowUTC().Format(time.RFC3339)).Scan(&csrfToken)
+	return csrfToken, err
+}
+
 func createAPIToken(ctx context.Context, db *sql.DB, userID, name string) (string, error) {
 	token := newToken()
-	_, err := db.ExecContext(ctx, `INSERT INTO api_tokens (id, user_id, name, token, created_at) VALUES (?, ?, ?, ?, ?)`,
-		newID("tok"), userID, strings.TrimSpace(name), token, nowUTC().Format(time.RFC3339))
+	id := newID("tok")
+	_, err := db.ExecContext(ctx, `INSERT INTO api_tokens (id, user_id, name, token, token_hash, token_preview, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, userID, strings.TrimSpace(name), "stored:"+id, apiTokenHash(token), tokenPreview(token), nowUTC().Format(time.RFC3339))
 	return token, err
 }
 
 func listAPITokens(ctx context.Context, db *sql.DB, userID string) ([]APIToken, error) {
-	rows, err := db.QueryContext(ctx, `SELECT id, user_id, name, token, created_at, COALESCE(last_used_at,''), COALESCE(revoked_at,'') FROM api_tokens WHERE user_id = ? ORDER BY created_at DESC`, userID)
+	rows, err := db.QueryContext(ctx, `SELECT id, user_id, name, token_preview, created_at, COALESCE(last_used_at,''), COALESCE(revoked_at,'') FROM api_tokens WHERE user_id = ? ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -623,7 +845,7 @@ func listAPITokens(ctx context.Context, db *sql.DB, userID string) ([]APIToken, 
 	for rows.Next() {
 		var t APIToken
 		var created string
-		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &t.Token, &created, &t.LastUsedAt, &t.RevokedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &t.TokenPreview, &created, &t.LastUsedAt, &t.RevokedAt); err != nil {
 			return nil, err
 		}
 		t.CreatedAt = parseTime(created)
@@ -638,15 +860,158 @@ func revokeAPIToken(ctx context.Context, db *sql.DB, userID, tokenID string) err
 }
 
 func userForAPIToken(ctx context.Context, db *sql.DB, token string) (*User, error) {
-	row := db.QueryRowContext(ctx, `SELECT u.id, u.username, u.password_hash, u.is_admin, COALESCE(u.deactivated_at,''), COALESCE(u.email,''), u.created_at
+	tokenHash := apiTokenHash(token)
+	row := db.QueryRowContext(ctx, `SELECT u.id, u.username, u.password_hash, u.is_admin, u.must_change_password, COALESCE(u.deactivated_at,''), COALESCE(u.email,''), u.created_at
 		FROM api_tokens t JOIN users u ON u.id = t.user_id
-		WHERE t.token = ? AND t.revoked_at IS NULL AND u.deactivated_at IS NULL`, token)
+		WHERE t.token_hash = ? AND t.revoked_at IS NULL AND u.deactivated_at IS NULL`, tokenHash)
 	u, err := scanUser(row)
 	if err != nil {
 		return nil, err
 	}
-	_, _ = db.ExecContext(ctx, `UPDATE api_tokens SET last_used_at = ? WHERE token = ?`, nowUTC().Format(time.RFC3339), token)
+	_, _ = db.ExecContext(ctx, `UPDATE api_tokens SET last_used_at = ? WHERE token_hash = ?`, nowUTC().Format(time.RFC3339), tokenHash)
 	return u, nil
+}
+
+func createInstallSet(ctx context.Context, db *sql.DB, userID, slug, name, description string) (*InstallSet, error) {
+	if err := validateSlug("set slug", slug); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(name) == "" {
+		return nil, errors.New("name is required")
+	}
+	now := nowUTC().Format(time.RFC3339)
+	id := newID("set")
+	_, err := db.ExecContext(ctx, `INSERT INTO install_sets (id, user_id, slug, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, userID, slug, strings.TrimSpace(name), strings.TrimSpace(description), now, now)
+	if err != nil {
+		return nil, err
+	}
+	return getInstallSet(ctx, db, userID, slug)
+}
+
+func listInstallSets(ctx context.Context, db *sql.DB, userID string) ([]InstallSet, error) {
+	rows, err := db.QueryContext(ctx, `SELECT st.id, st.user_id, st.slug, st.name, st.description, COUNT(s.id), st.created_at, st.updated_at
+		FROM install_sets st
+		LEFT JOIN install_set_skills ss ON ss.set_id = st.id
+		LEFT JOIN skills s ON s.id = ss.skill_id AND s.archived_at IS NULL
+		WHERE st.user_id = ?
+		GROUP BY st.id
+		ORDER BY st.updated_at DESC, st.name`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sets []InstallSet
+	for rows.Next() {
+		set, err := scanInstallSet(rows)
+		if err != nil {
+			return nil, err
+		}
+		sets = append(sets, *set)
+	}
+	return sets, rows.Err()
+}
+
+func getInstallSet(ctx context.Context, db *sql.DB, userID, slug string) (*InstallSet, error) {
+	row := db.QueryRowContext(ctx, `SELECT st.id, st.user_id, st.slug, st.name, st.description, COUNT(s.id), st.created_at, st.updated_at
+		FROM install_sets st
+		LEFT JOIN install_set_skills ss ON ss.set_id = st.id
+		LEFT JOIN skills s ON s.id = ss.skill_id AND s.archived_at IS NULL
+		WHERE st.user_id = ? AND st.slug = ?
+		GROUP BY st.id`, userID, slug)
+	return scanInstallSet(row)
+}
+
+func scanInstallSet(row scanner) (*InstallSet, error) {
+	var set InstallSet
+	var created, updated string
+	if err := row.Scan(&set.ID, &set.UserID, &set.Slug, &set.Name, &set.Description, &set.SkillCount, &created, &updated); err != nil {
+		return nil, err
+	}
+	set.CreatedAt = parseTime(created)
+	set.UpdatedAt = parseTime(updated)
+	return &set, nil
+}
+
+func updateInstallSet(ctx context.Context, db *sql.DB, userID, slug, name, description string, skillIDs []string) (*InstallSet, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, errors.New("name is required")
+	}
+	set, err := getInstallSet(ctx, db, userID, slug)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE install_sets SET name = ?, description = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
+		strings.TrimSpace(name), strings.TrimSpace(description), nowUTC().Format(time.RFC3339), set.ID, userID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM install_set_skills WHERE set_id = ?`, set.ID); err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	position := 0
+	for _, skillID := range skillIDs {
+		skillID = strings.TrimSpace(skillID)
+		if skillID == "" || seen[skillID] {
+			continue
+		}
+		seen[skillID] = true
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM skills WHERE id = ? AND owner_id = ? AND archived_at IS NULL`, skillID, userID).Scan(&exists); err != nil {
+			return nil, err
+		}
+		if exists == 0 {
+			return nil, errors.New("install set includes an unknown or archived skill")
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO install_set_skills (set_id, skill_id, position) VALUES (?, ?, ?)`, set.ID, skillID, position); err != nil {
+			return nil, err
+		}
+		position++
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return getInstallSet(ctx, db, userID, slug)
+}
+
+func deleteInstallSet(ctx context.Context, db *sql.DB, userID, slug string) error {
+	set, err := getInstallSet(ctx, db, userID, slug)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `DELETE FROM install_sets WHERE id = ? AND user_id = ?`, set.ID, userID)
+	return err
+}
+
+func listInstallSetSkills(ctx context.Context, db *sql.DB, userID, slug string) (*InstallSet, []Skill, error) {
+	set, err := getInstallSet(ctx, db, userID, slug)
+	if err != nil {
+		return nil, nil, err
+	}
+	rows, err := db.QueryContext(ctx, `SELECT s.id, s.owner_type, s.owner_id, s.owner_slug, s.slug, s.name, s.description, COALESCE(s.short_description,''), s.recommended_default, s.pinned_install, COALESCE(s.source_provider,''), COALESCE(s.source_url,''), COALESCE(s.current_revision_id,''), COALESCE(r.revision_number,0), COALESCE(s.archived_at,''), s.created_at, s.updated_at
+		FROM install_set_skills ss
+		JOIN skills s ON s.id = ss.skill_id
+		LEFT JOIN skill_revisions r ON r.id = s.current_revision_id
+		WHERE ss.set_id = ? AND s.owner_id = ? AND s.archived_at IS NULL
+		ORDER BY ss.position, s.name`, set.ID, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	var skills []Skill
+	for rows.Next() {
+		s, err := scanSkill(rows)
+		if err != nil {
+			return nil, nil, err
+		}
+		skills = append(skills, *s)
+	}
+	return set, skills, rows.Err()
 }
 
 func listSkills(ctx context.Context, db *sql.DB, userID string, includeArchived bool) ([]Skill, error) {
@@ -767,6 +1132,21 @@ func updateSkill(ctx context.Context, db *sql.DB, user *User, owner, slug string
 	return getSkill(ctx, db, user.ID, owner, slug)
 }
 
+func updateSkillFlags(ctx context.Context, db *sql.DB, user *User, owner, slug string, recommendedDefault, pinnedInstall bool) (*Skill, error) {
+	s, err := getSkill(ctx, db, user.ID, owner, slug)
+	if err != nil {
+		return nil, err
+	}
+	if s.ArchivedAt != "" {
+		return nil, errors.New("archived skills cannot be edited")
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE skills SET recommended_default = ?, pinned_install = ?, updated_at = ? WHERE id = ?`,
+		boolInt(recommendedDefault), boolInt(pinnedInstall), nowUTC().Format(time.RFC3339), s.ID); err != nil {
+		return nil, err
+	}
+	return getSkill(ctx, db, user.ID, owner, slug)
+}
+
 func updateSkillSource(ctx context.Context, db *sql.DB, userID, owner, slug string, in SkillInput) (*Skill, error) {
 	s, err := getSkill(ctx, db, userID, owner, slug)
 	if err != nil {
@@ -789,29 +1169,100 @@ func normalizedSource(in SkillInput) (string, string) {
 }
 
 func insertRevision(ctx context.Context, tx *sql.Tx, skillID string, number int, userID string, in SkillInput) (string, error) {
-	raw := []byte(renderSkillMarkdown(in))
+	files, totalSize, err := normalizedSkillFiles(in)
+	if err != nil {
+		return "", err
+	}
 	frontmatter, _ := json.Marshal(map[string]any{
 		"name":              strings.TrimSpace(in.Name),
 		"description":       strings.TrimSpace(in.Description),
 		"short_description": strings.TrimSpace(in.ShortDescription),
 	})
+	filePaths := make([]string, 0, len(files))
+	for _, file := range files {
+		filePaths = append(filePaths, file.Path)
+	}
 	manifest, _ := json.Marshal(map[string]any{
-		"files":             []string{"SKILL.md"},
-		"file_count":        1,
-		"total_size":        len(raw),
+		"files":             filePaths,
+		"file_count":        len(files),
+		"total_size":        totalSize,
 		"supported_targets": []string{"codex"},
 	})
 	revID := newID("rev")
 	now := nowUTC().Format(time.RFC3339)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO skill_revisions (id, skill_id, revision_number, frontmatter_json, manifest_json, tree_hash, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		revID, skillID, number, string(frontmatter), string(manifest), sha256String(raw), now, userID); err != nil {
+		revID, skillID, number, string(frontmatter), string(manifest), skillTreeHash(files), now, userID); err != nil {
 		return "", err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO skill_revision_files (id, revision_id, path, content, content_type, content_hash, size_bytes, executable, created_at) VALUES (?, ?, 'SKILL.md', ?, 'text/markdown; charset=utf-8', ?, ?, 0, ?)`,
-		newID("file"), revID, raw, sha256String(raw), len(raw), now); err != nil {
-		return "", err
+	for _, file := range files {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO skill_revision_files (id, revision_id, path, content, content_type, content_hash, size_bytes, executable, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			newID("file"), revID, file.Path, []byte(file.Content), file.ContentType, sha256String([]byte(file.Content)), len([]byte(file.Content)), boolInt(file.Executable), now); err != nil {
+			return "", err
+		}
 	}
 	return revID, nil
+}
+
+func normalizedSkillFiles(in SkillInput) ([]SkillFile, int, error) {
+	main := SkillFile{Path: "SKILL.md", Content: renderSkillMarkdown(in), ContentType: "text/markdown; charset=utf-8"}
+	files := []SkillFile{main}
+	seen := map[string]bool{"SKILL.md": true}
+	total := len([]byte(main.Content))
+	for _, file := range in.Files {
+		file.Path = strings.TrimSpace(file.Path)
+		if file.Path == "" {
+			continue
+		}
+		if err := validateSkillFilePath(file.Path); err != nil {
+			return nil, 0, err
+		}
+		if file.Path == "SKILL.md" {
+			return nil, 0, errors.New("supporting files cannot replace SKILL.md")
+		}
+		if seen[file.Path] {
+			return nil, 0, fmt.Errorf("duplicate file path %q", file.Path)
+		}
+		seen[file.Path] = true
+		if file.ContentType == "" {
+			file.ContentType = contentTypeForPath(file.Path)
+		}
+		size := len([]byte(file.Content))
+		if size > maxImportedSkillBytes {
+			return nil, 0, fmt.Errorf("%s is too large", file.Path)
+		}
+		total += size
+		if total > maxSkillsDexExportBytes {
+			return nil, 0, errors.New("skill package is too large")
+		}
+		files = append(files, file)
+	}
+	supporting := files[1:]
+	sort.Slice(supporting, func(i, j int) bool {
+		return supporting[i].Path < supporting[j].Path
+	})
+	return files, total, nil
+}
+
+func contentTypeForPath(filePath string) string {
+	switch strings.ToLower(path.Ext(filePath)) {
+	case ".md", ".markdown":
+		return "text/markdown; charset=utf-8"
+	case ".txt", ".json", ".yaml", ".yml", ".toml", ".sh", ".py", ".js", ".ts":
+		return "text/plain; charset=utf-8"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+func skillTreeHash(files []SkillFile) string {
+	var b strings.Builder
+	for _, file := range files {
+		b.WriteString(file.Path)
+		b.WriteByte('\n')
+		b.WriteString(sha256String([]byte(file.Content)))
+		b.WriteByte('\n')
+	}
+	return sha256String([]byte(b.String()))
 }
 
 func archiveSkill(ctx context.Context, db *sql.DB, userID, owner, slug string) error {
@@ -855,6 +1306,40 @@ func rawSkill(ctx context.Context, db *sql.DB, userID, owner, slug string) ([]by
 	return content, s, err
 }
 
+func currentSkillFiles(ctx context.Context, db *sql.DB, userID, owner, slug string) ([]SkillFile, *Skill, error) {
+	s, err := getSkill(ctx, db, userID, owner, slug)
+	if err != nil {
+		return nil, nil, err
+	}
+	files, err := filesForRevision(ctx, db, s.CurrentRevisionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return files, s, nil
+}
+
+func filesForRevision(ctx context.Context, db *sql.DB, revisionID string) ([]SkillFile, error) {
+	rows, err := db.QueryContext(ctx, `SELECT path, content, content_type, size_bytes, executable FROM skill_revision_files WHERE revision_id = ? ORDER BY CASE WHEN path = 'SKILL.md' THEN 0 ELSE 1 END, path`, revisionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var files []SkillFile
+	for rows.Next() {
+		var file SkillFile
+		var content []byte
+		if err := rows.Scan(&file.Path, &content, &file.ContentType, &file.SizeBytes, &file.Executable); err != nil {
+			return nil, err
+		}
+		file.Content = string(content)
+		files = append(files, file)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
 func listRevisions(ctx context.Context, db *sql.DB, userID, owner, slug string) ([]SkillRevision, error) {
 	s, err := getSkill(ctx, db, userID, owner, slug)
 	if err != nil {
@@ -879,6 +1364,19 @@ func listRevisions(ctx context.Context, db *sql.DB, userID, owner, slug string) 
 }
 
 func getRevisionContent(ctx context.Context, db *sql.DB, userID, owner, slug, revID string) ([]byte, SkillRevision, *Skill, error) {
+	files, r, s, err := getRevisionFiles(ctx, db, userID, owner, slug, revID)
+	if err != nil {
+		return nil, SkillRevision{}, nil, err
+	}
+	for _, file := range files {
+		if file.Path == "SKILL.md" {
+			return []byte(file.Content), r, s, nil
+		}
+	}
+	return nil, SkillRevision{}, nil, sql.ErrNoRows
+}
+
+func getRevisionFiles(ctx context.Context, db *sql.DB, userID, owner, slug, revID string) ([]SkillFile, SkillRevision, *Skill, error) {
 	s, err := getSkill(ctx, db, userID, owner, slug)
 	if err != nil {
 		return nil, SkillRevision{}, nil, err
@@ -891,12 +1389,24 @@ func getRevisionContent(ctx context.Context, db *sql.DB, userID, owner, slug, re
 		return nil, SkillRevision{}, nil, err
 	}
 	r.CreatedAt = parseTime(created)
-	var content []byte
-	err = db.QueryRowContext(ctx, `SELECT content FROM skill_revision_files WHERE revision_id = ? AND path = 'SKILL.md'`, r.ID).Scan(&content)
-	return content, r, s, err
+	files, err := filesForRevision(ctx, db, r.ID)
+	return files, r, s, err
 }
 
 func previousRevisionContent(ctx context.Context, db *sql.DB, rev SkillRevision) ([]byte, error) {
+	files, err := previousRevisionFiles(ctx, db, rev)
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range files {
+		if file.Path == "SKILL.md" {
+			return []byte(file.Content), nil
+		}
+	}
+	return nil, nil
+}
+
+func previousRevisionFiles(ctx context.Context, db *sql.DB, rev SkillRevision) ([]SkillFile, error) {
 	var prevID string
 	err := db.QueryRowContext(ctx, `SELECT id FROM skill_revisions WHERE skill_id = ? AND revision_number < ? ORDER BY revision_number DESC LIMIT 1`, rev.SkillID, rev.RevisionNumber).Scan(&prevID)
 	if err != nil {
@@ -905,9 +1415,7 @@ func previousRevisionContent(ctx context.Context, db *sql.DB, rev SkillRevision)
 		}
 		return nil, err
 	}
-	var content []byte
-	err = db.QueryRowContext(ctx, `SELECT content FROM skill_revision_files WHERE revision_id = ? AND path = 'SKILL.md'`, prevID).Scan(&content)
-	return content, err
+	return filesForRevision(ctx, db, prevID)
 }
 
 func isNotFound(err error) bool {

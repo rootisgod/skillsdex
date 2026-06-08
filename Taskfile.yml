@@ -12,6 +12,51 @@ tasks:
     cmds:
       - go build -o skillsdex .
 
+  clean:
+    desc: Remove local build artifacts
+    cmds:
+      - rm -rf dist skillsdex
+
+  release:
+    desc: Build release archives for common platforms
+    cmds:
+      - |
+        set -eu
+        version="${VERSION:-dev}"
+        rm -rf dist
+        mkdir -p dist
+        for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
+          os="${target%/*}"
+          arch="${target#*/}"
+          out="dist/skillsdex-${version}-${os}-${arch}"
+          mkdir -p "$out"
+          GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${version}" -o "$out/skillsdex" .
+          cp README.md "$out/README.md"
+          tar -C dist -czf "${out}.tar.gz" "$(basename "$out")"
+        done
+        (cd dist && shasum -a 256 *.tar.gz > SHA256SUMS)
+
+  homebrew-formula:
+    desc: Generate a Homebrew formula from dist/SHA256SUMS
+    cmds:
+      - scripts/homebrew_formula.sh "${VERSION:-dev}"
+
+  release-signed:
+    desc: Build release archives and sign them with minisign
+    cmds:
+      - task release
+      - scripts/sign_release.sh dist
+
+  e2e-first-run:
+    desc: Run a clean-home first-run server and CLI smoke test
+    cmds:
+      - scripts/e2e_first_run.sh
+
+  docker-build:
+    desc: Build the local Docker image
+    cmds:
+      - docker build -t skillsdex:local .
+
   launch:
     desc: Build, start, and open the SkillsDex website
     cmds:
