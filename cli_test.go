@@ -2736,8 +2736,8 @@ func TestRunImportSourceGitHubFolderInstallDryRunPreservesSupportingFiles(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if skill.SourceProvider != "github" || skill.SourceURL != "https://github.com/acme/skills/blob/main/workflow/SKILL.md" {
-		t.Fatalf("source metadata = %q %q", skill.SourceProvider, skill.SourceURL)
+	if skill.SourceProvider != "github" || skill.SourceURL != "https://github.com/acme/skills/blob/main/workflow/SKILL.md" || skill.SourceAuthor != "acme" || skill.SourceName != "skills" || skill.SourcePath != "workflow/SKILL.md" || skill.SourceRef != "main" {
+		t.Fatalf("source metadata = %#v", skill)
 	}
 	files, _, err := currentSkillFiles(context.Background(), ta.DB, ta.Admin.ID, "admin", "workflow")
 	if err != nil {
@@ -3660,7 +3660,7 @@ func TestRunBackupInspectValidatesAndSummarizesLocalBackup(t *testing.T) {
 		"active",
 		"2",
 		"pinned,recommended",
-		"github",
+		"GitHub",
 		"admin/old",
 		"archived",
 	} {

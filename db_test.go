@@ -61,6 +61,10 @@ func TestDefaultAdminAndTenantScopedSkills(t *testing.T) {
 		PinnedInstall:  true,
 		SourceProvider: "github",
 		SourceURL:      "https://github.com/acme/skills/tree/main/debugging",
+		SourceAuthor:   "acme",
+		SourceName:     "skills",
+		SourcePath:     "debugging/SKILL.md",
+		SourceRef:      "main",
 		Body:           "# Debugging",
 	})
 	if err != nil {
@@ -79,7 +83,7 @@ func TestDefaultAdminAndTenantScopedSkills(t *testing.T) {
 	if !aliceSkill.PinnedInstall {
 		t.Fatal("pinned install metadata was not stored")
 	}
-	if aliceSkill.SourceProvider != "github" || aliceSkill.SourceURL != "https://github.com/acme/skills/tree/main/debugging" {
+	if aliceSkill.SourceProvider != "github" || aliceSkill.SourceURL != "https://github.com/acme/skills/tree/main/debugging" || aliceSkill.SourceAuthor != "acme" || aliceSkill.SourceName != "skills" || aliceSkill.SourcePath != "debugging/SKILL.md" || aliceSkill.SourceRef != "main" {
 		t.Fatalf("source metadata was not stored: %#v", aliceSkill)
 	}
 }
@@ -464,7 +468,7 @@ func TestMigrateLegacyDatabaseShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if skill.RecommendedDefault || skill.PinnedInstall || skill.SourceProvider != "" || skill.SourceURL != "" {
+	if skill.RecommendedDefault || skill.PinnedInstall || skill.SourceProvider != "" || skill.SourceURL != "" || skill.SourceAuthor != "" || skill.SourceName != "" || skill.SourcePath != "" || skill.SourceRef != "" {
 		t.Fatalf("new skill metadata columns should default empty/false after migration: %#v", skill)
 	}
 	files, _, err := currentSkillFiles(ctx, db, admin.ID, "admin", "legacy-skill")

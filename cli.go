@@ -1329,7 +1329,7 @@ func inspectSkillsDexBackup(data []byte) (backupInspectSummary, error) {
 		if in.RecommendedDefault {
 			summary.Recommended++
 		}
-		if strings.TrimSpace(in.SourceProvider) != "" || strings.TrimSpace(in.SourceURL) != "" {
+		if strings.TrimSpace(in.SourceProvider) != "" || strings.TrimSpace(in.SourceURL) != "" || strings.TrimSpace(in.SourceAuthor) != "" || strings.TrimSpace(in.SourceName) != "" {
 			summary.SourceBacked++
 		}
 		summary.SupportingFiles += len(in.Files)
@@ -1397,9 +1397,16 @@ func backupFlags(in SkillInput) string {
 }
 
 func backupSourceLabel(in SkillInput) string {
-	provider := strings.TrimSpace(in.SourceProvider)
-	if provider != "" {
-		return provider
+	label := sourceDisplayLabel(&Skill{
+		SourceProvider: in.SourceProvider,
+		SourceURL:      in.SourceURL,
+		SourceAuthor:   in.SourceAuthor,
+		SourceName:     in.SourceName,
+		SourcePath:     in.SourcePath,
+		SourceRef:      in.SourceRef,
+	})
+	if label != "Manual" {
+		return label
 	}
 	if strings.TrimSpace(in.SourceURL) != "" {
 		return "source"
@@ -1570,8 +1577,8 @@ func runShow(args []string) error {
 	if s.PinnedInstall {
 		fmt.Println("Pinned install: yes")
 	}
-	if s.SourceProvider != "" || s.SourceURL != "" {
-		source := sourceProviderLabel(s.SourceProvider)
+	if s.SourceProvider != "" || s.SourceURL != "" || s.SourceAuthor != "" || s.SourceName != "" || s.SourcePath != "" {
+		source := sourceDisplayLabel(&s)
 		if s.SourceURL != "" {
 			source += " (" + s.SourceURL + ")"
 		}
@@ -1915,6 +1922,10 @@ func skillInputFromResponse(resp skillResponse) SkillInput {
 		PinnedInstall:      resp.Skill.PinnedInstall,
 		SourceProvider:     resp.Skill.SourceProvider,
 		SourceURL:          resp.Skill.SourceURL,
+		SourceAuthor:       resp.Skill.SourceAuthor,
+		SourceName:         resp.Skill.SourceName,
+		SourcePath:         resp.Skill.SourcePath,
+		SourceRef:          resp.Skill.SourceRef,
 		Tags:               resp.Skill.Tags,
 		TagsExplicit:       true,
 		Body:               bodyFromSkillMarkdown(resp.Raw),

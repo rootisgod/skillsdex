@@ -129,6 +129,8 @@ Search public agentskill.sh skills from the CLI:
 
 `import-source --install` imports the source into your library, then installs the successfully imported skill package through the same managed-file protections as `install`. `--dry-run` previews only the local install step; the library import still happens.
 
+Imported skills keep their local SkillsDex identifier, such as `admin/golang-pro`, and also store source provenance separately. For GitHub sources this includes the source author or organization, repository, package path, ref, and original URL, for example `Jeffallan/claude-skills · skills/golang-pro/SKILL.md @ main`. Skill detail pages, `show`, backup inspect, API JSON, and SkillsDex backup export/restore preserve that context without changing install commands or local ownership.
+
 Publish a local `SKILL.md` or full skill folder into SkillsDex:
 
 ```bash

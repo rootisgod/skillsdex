@@ -987,6 +987,10 @@ func TestSkillExportDumpsOwnedSkills(t *testing.T) {
 		Description:    "Use when testing export.",
 		SourceProvider: "github",
 		SourceURL:      "https://github.com/acme/skills/tree/main/exported-skill",
+		SourceAuthor:   "acme",
+		SourceName:     "skills",
+		SourcePath:     "exported-skill/SKILL.md",
+		SourceRef:      "main",
 		SourceExplicit: true,
 		Tags:           []string{"go", "testing"},
 		Body:           "# Exported Skill\n\nInstructions.",
@@ -1068,7 +1072,7 @@ func TestSkillExportDumpsOwnedSkills(t *testing.T) {
 	for _, skill := range manifest.Skills {
 		if skill.Identifier == "admin/exported-skill" {
 			found = true
-			if !skill.Archived || skill.SourceProvider != "github" || skill.SourceURL == "" || skill.Path != "admin--exported-skill/SKILL.md" || strings.Join(skill.Tags, ",") != "go,testing" {
+			if !skill.Archived || skill.SourceProvider != "github" || skill.SourceURL == "" || skill.SourceAuthor != "acme" || skill.SourceName != "skills" || skill.SourcePath != "exported-skill/SKILL.md" || skill.SourceRef != "main" || skill.Path != "admin--exported-skill/SKILL.md" || strings.Join(skill.Tags, ",") != "go,testing" {
 				t.Fatalf("unexpected manifest skill: %#v", skill)
 			}
 		}
@@ -1355,6 +1359,10 @@ func TestSkillImportRestoresSkillsDexExport(t *testing.T) {
 		PinnedInstall:      true,
 		SourceProvider:     "github",
 		SourceURL:          "https://github.com/example/skills/tree/main/backup-skill",
+		SourceAuthor:       "example",
+		SourceName:         "skills",
+		SourcePath:         "backup-skill/SKILL.md",
+		SourceRef:          "main",
 		SourceExplicit:     true,
 		Tags:               []string{"backup", "testing"},
 		Body:               "# Backup Skill\n\nRestore this from a zip.",
@@ -1401,7 +1409,7 @@ func TestSkillImportRestoresSkillsDexExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restored.Name != "Backup Skill" || !restored.RecommendedDefault || !restored.PinnedInstall || restored.SourceProvider != "github" || restored.SourceURL == "" || restored.ArchivedAt == "" || strings.Join(restored.Tags, ",") != "backup,testing" {
+	if restored.Name != "Backup Skill" || !restored.RecommendedDefault || !restored.PinnedInstall || restored.SourceProvider != "github" || restored.SourceURL == "" || restored.SourceAuthor != "example" || restored.SourceName != "skills" || restored.SourcePath != "backup-skill/SKILL.md" || restored.SourceRef != "main" || restored.ArchivedAt == "" || strings.Join(restored.Tags, ",") != "backup,testing" {
 		t.Fatalf("unexpected restored skill: %#v", restored)
 	}
 	raw, _, err := rawSkill(ctx, db, restoreUser.ID, "restore", "backup-skill")
@@ -1837,13 +1845,13 @@ func TestSkillDeleteRouteDeletesOwnedSkill(t *testing.T) {
 }
 
 func TestSourceMetaHTMLLinksOnlySafeURLs(t *testing.T) {
-	good := sourceMetaHTML(&Skill{SourceProvider: "github", SourceURL: "https://github.com/acme/skills"})
-	if !strings.Contains(good, `href="https://github.com/acme/skills"`) || !strings.Contains(good, "GitHub") {
+	good := sourceMetaHTML(&Skill{SourceProvider: "github", SourceURL: "https://github.com/acme/skills", SourceAuthor: "acme", SourceName: "skills", SourcePath: "review/SKILL.md", SourceRef: "main"})
+	if !strings.Contains(good, `href="https://github.com/acme/skills"`) || !strings.Contains(good, "GitHub: acme/skills") || !strings.Contains(good, "review/SKILL.md @ main") {
 		t.Fatalf("safe source did not render as link: %s", good)
 	}
 
-	bad := sourceMetaHTML(&Skill{SourceProvider: "github", SourceURL: "javascript:alert(1)"})
-	if strings.Contains(bad, "href=") || !strings.Contains(bad, "GitHub") {
+	bad := sourceMetaHTML(&Skill{SourceProvider: "github", SourceURL: "javascript:alert(1)", SourceAuthor: "acme", SourceName: "skills"})
+	if strings.Contains(bad, "href=") || !strings.Contains(bad, "GitHub: acme/skills") {
 		t.Fatalf("unsafe source rendered incorrectly: %s", bad)
 	}
 }

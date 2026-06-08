@@ -161,6 +161,10 @@ func importSkillInputsFromSkillsDexExport(data []byte, owner string) ([]restored
 		in.PinnedInstall = meta.PinnedInstall
 		in.SourceProvider = meta.SourceProvider
 		in.SourceURL = meta.SourceURL
+		in.SourceAuthor = meta.SourceAuthor
+		in.SourceName = meta.SourceName
+		in.SourcePath = meta.SourcePath
+		in.SourceRef = meta.SourceRef
 		in.SourceExplicit = true
 		supporting, err := supportingFilesFromBackup(files, meta.Path)
 		if err != nil {
@@ -261,7 +265,7 @@ func importSkillInputsFromGitHub(ctx context.Context, client httpDoer, sourceURL
 			return nil, err
 		}
 		fallback := strings.TrimSuffix(path.Base(source.Path), path.Ext(source.Path))
-		skills = append(skills, withSource(skillInputFromRawMarkdown(raw, owner, fallback, "Imported from GitHub."), "github", sourceURL))
+		skills = append(skills, withGitHubSource(skillInputFromRawMarkdown(raw, owner, fallback, "Imported from GitHub."), source, source.Path, sourceURL))
 		return skills, nil
 	}
 
@@ -276,7 +280,7 @@ func importSkillInputsFromGitHub(ctx context.Context, client httpDoer, sourceURL
 		if err != nil {
 			return nil, err
 		}
-		skills = append(skills, withSource(in, "github", firstNonEmpty(sourceHTMLURL, sourceURL)))
+		skills = append(skills, withGitHubSource(in, source, source.Path, firstNonEmpty(sourceHTMLURL, sourceURL)))
 		return skills, nil
 	}
 
@@ -293,7 +297,7 @@ func importSkillInputsFromGitHub(ctx context.Context, client httpDoer, sourceURL
 		if err != nil {
 			return nil, err
 		}
-		skills = append(skills, withSource(in, "github", firstNonEmpty(sourceHTMLURL, sourceURL)))
+		skills = append(skills, withGitHubSource(in, source, path.Join(source.Path, "SKILL.md"), firstNonEmpty(sourceHTMLURL, sourceURL)))
 		return skills, nil
 	}
 
@@ -309,7 +313,7 @@ func importSkillInputsFromGitHub(ctx context.Context, client httpDoer, sourceURL
 				if err != nil {
 					return nil, err
 				}
-				skills = append(skills, withSource(skillInputFromRawMarkdown(raw, owner, source.Repo, "Imported from GitHub."), "github", firstNonEmpty(sourceHTMLURL, entry.HTMLURL, sourceURL)))
+				skills = append(skills, withGitHubSource(skillInputFromRawMarkdown(raw, owner, source.Repo, "Imported from GitHub."), source, entry.Path, firstNonEmpty(sourceHTMLURL, entry.HTMLURL, sourceURL)))
 			}
 		case "dir":
 			raw, sourceHTMLURL, err := fetchGitHubFile(ctx, client, source, path.Join(entry.Path, "SKILL.md"))
@@ -324,7 +328,7 @@ func importSkillInputsFromGitHub(ctx context.Context, client httpDoer, sourceURL
 			if err != nil {
 				return nil, err
 			}
-			skills = append(skills, withSource(in, "github", firstNonEmpty(entry.HTMLURL, sourceHTMLURL, sourceURL)))
+			skills = append(skills, withGitHubSource(in, source, path.Join(entry.Path, "SKILL.md"), firstNonEmpty(entry.HTMLURL, sourceHTMLURL, sourceURL)))
 		}
 	}
 	return skills, nil
@@ -364,7 +368,7 @@ func importSkillInputsFromAgentSkill(ctx context.Context, client httpDoer, sourc
 	fallbackDescription := firstNonEmpty(payload.Description, "Imported from agentskill.sh.")
 	in := skillInputFromRawMarkdown(payload.SkillMd, owner, fallbackSlug, fallbackDescription)
 	in.Body = stripAgentSkillMetadataHeader(in.Body)
-	in = withSource(in, "agentskill.sh", "https://agentskill.sh/@"+source.Slug)
+	in = withAgentSkillSource(in, source)
 	return []SkillInput{in}, nil
 }
 
@@ -606,9 +610,24 @@ func skillInputMatchesFiles(in SkillInput, files []SkillFile) bool {
 	return true
 }
 
-func withSource(in SkillInput, provider, sourceURL string) SkillInput {
-	in.SourceProvider = provider
+func withGitHubSource(in SkillInput, source githubSource, skillPath, sourceURL string) SkillInput {
+	in.SourceProvider = "github"
 	in.SourceURL = strings.TrimSpace(sourceURL)
+	in.SourceAuthor = source.Owner
+	in.SourceName = source.Repo
+	in.SourcePath = strings.Trim(strings.TrimSpace(skillPath), "/")
+	in.SourceRef = source.Ref
+	in.SourceExplicit = true
+	return in
+}
+
+func withAgentSkillSource(in SkillInput, source agentSkillSource) SkillInput {
+	owner, name, _ := strings.Cut(source.Slug, "/")
+	in.SourceProvider = "agentskill.sh"
+	in.SourceURL = "https://agentskill.sh/@" + source.Slug
+	in.SourceAuthor = owner
+	in.SourceName = name
+	in.SourcePath = source.Slug
 	in.SourceExplicit = true
 	return in
 }

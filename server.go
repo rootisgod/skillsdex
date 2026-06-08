@@ -949,6 +949,10 @@ type exportSkillMeta struct {
 	PinnedInstall      bool     `json:"pinned_install"`
 	SourceProvider     string   `json:"source_provider,omitempty"`
 	SourceURL          string   `json:"source_url,omitempty"`
+	SourceAuthor       string   `json:"source_author,omitempty"`
+	SourceName         string   `json:"source_name,omitempty"`
+	SourcePath         string   `json:"source_path,omitempty"`
+	SourceRef          string   `json:"source_ref,omitempty"`
 	Path               string   `json:"path"`
 }
 
@@ -991,6 +995,10 @@ func buildSkillsExport(ctx context.Context, db *sql.DB, u *User) ([]byte, error)
 			PinnedInstall:      s.PinnedInstall,
 			SourceProvider:     s.SourceProvider,
 			SourceURL:          s.SourceURL,
+			SourceAuthor:       s.SourceAuthor,
+			SourceName:         s.SourceName,
+			SourcePath:         s.SourcePath,
+			SourceRef:          s.SourceRef,
 			Path:               skillPath,
 		})
 	}
@@ -1111,7 +1119,7 @@ func (a *app) handleSkillEdit(w http.ResponseWriter, r *http.Request, u *User, o
 		http.NotFound(w, r)
 		return
 	}
-	in := SkillInput{Owner: owner, Slug: slug, Name: s.Name, Description: s.Description, ShortDescription: s.ShortDescription, RecommendedDefault: s.RecommendedDefault, PinnedInstall: s.PinnedInstall, SourceProvider: s.SourceProvider, SourceURL: s.SourceURL, Tags: s.Tags, TagsExplicit: true, Body: bodyFromSkillMarkdown(string(raw))}
+	in := SkillInput{Owner: owner, Slug: slug, Name: s.Name, Description: s.Description, ShortDescription: s.ShortDescription, RecommendedDefault: s.RecommendedDefault, PinnedInstall: s.PinnedInstall, SourceProvider: s.SourceProvider, SourceURL: s.SourceURL, SourceAuthor: s.SourceAuthor, SourceName: s.SourceName, SourcePath: s.SourcePath, SourceRef: s.SourceRef, Tags: s.Tags, TagsExplicit: true, Body: bodyFromSkillMarkdown(string(raw))}
 	currentFiles, _, filesErr := currentSkillFiles(r.Context(), a.db, u.ID, owner, slug)
 	if filesErr == nil {
 		in.Files = supportingFilesOnly(currentFiles)
@@ -1271,6 +1279,10 @@ func skillInputFromForm(r *http.Request, defaultOwner string) SkillInput {
 		PinnedInstall:      r.FormValue("pinned_install") == "on",
 		SourceProvider:     strings.TrimSpace(r.FormValue("source_provider")),
 		SourceURL:          strings.TrimSpace(r.FormValue("source_url")),
+		SourceAuthor:       strings.TrimSpace(r.FormValue("source_author")),
+		SourceName:         strings.TrimSpace(r.FormValue("source_name")),
+		SourcePath:         strings.TrimSpace(r.FormValue("source_path")),
+		SourceRef:          strings.TrimSpace(r.FormValue("source_ref")),
 		SourceExplicit:     true,
 		Tags:               parseTagList(r.FormValue("tags")),
 		TagsExplicit:       true,
@@ -2394,6 +2406,10 @@ func skillFormPage(action string, create bool, in SkillInput, msg string) templa
 		<label>Tags <input name="tags" value="` + html.EscapeString(tagsText(in.Tags)) + `" placeholder="go, testing, security"></label>
 		<div class="form-grid"><label>Source provider <input name="source_provider" value="` + html.EscapeString(in.SourceProvider) + `" placeholder="github or agentskill.sh"></label>
 		<label>Source URL <input name="source_url" type="url" value="` + html.EscapeString(in.SourceURL) + `" placeholder="https://github.com/owner/repo/tree/main/skill"></label></div>
+		<div class="form-grid"><label>Source author <input name="source_author" value="` + html.EscapeString(in.SourceAuthor) + `" placeholder="Jeffallan"></label>
+		<label>Source name <input name="source_name" value="` + html.EscapeString(in.SourceName) + `" placeholder="claude-skills"></label>
+		<label>Source path <input name="source_path" value="` + html.EscapeString(in.SourcePath) + `" placeholder="skills/golang-pro/SKILL.md"></label>
+		<label>Source ref <input name="source_ref" value="` + html.EscapeString(in.SourceRef) + `" placeholder="main"></label></div>
 		<label class="check"><input name="recommended_default" type="checkbox"`)
 	if in.RecommendedDefault {
 		b.WriteString(` checked`)
@@ -2604,14 +2620,33 @@ func summaryClass(summary string) string {
 }
 
 func sourceMetaHTML(s *Skill) string {
-	if s.SourceProvider == "" && s.SourceURL == "" {
+	if s.SourceProvider == "" && s.SourceURL == "" && s.SourceAuthor == "" && s.SourceName == "" && s.SourcePath == "" {
 		return `<div><span>Source</span><strong>Manual</strong></div>`
 	}
-	label := sourceProviderLabel(s.SourceProvider)
+	label := sourceDisplayLabel(s)
 	if s.SourceURL == "" || !safeHTTPURL(s.SourceURL) {
 		return `<div><span>Source</span><strong>` + html.EscapeString(label) + `</strong></div>`
 	}
 	return `<div><span>Source</span><strong><a href="` + html.EscapeString(s.SourceURL) + `" target="_blank" rel="noopener">` + html.EscapeString(label) + `</a></strong></div>`
+}
+
+func sourceDisplayLabel(s *Skill) string {
+	provider := sourceProviderLabel(s.SourceProvider)
+	identity := strings.Trim(strings.TrimSpace(s.SourceAuthor)+"/"+strings.TrimSpace(s.SourceName), "/")
+	pathLabel := strings.TrimSpace(s.SourcePath)
+	ref := strings.TrimSpace(s.SourceRef)
+	switch {
+	case identity != "" && pathLabel != "" && ref != "":
+		return provider + ": " + identity + " · " + pathLabel + " @ " + ref
+	case identity != "" && pathLabel != "":
+		return provider + ": " + identity + " · " + pathLabel
+	case identity != "":
+		return provider + ": " + identity
+	case pathLabel != "":
+		return provider + ": " + pathLabel
+	default:
+		return provider
+	}
 }
 
 func sourceProviderLabel(provider string) string {

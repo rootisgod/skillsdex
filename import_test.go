@@ -160,7 +160,7 @@ func TestImportSkillInputsFromAgentSkill(t *testing.T) {
 	if got.Owner != "alice" || got.Slug != "openclaw-debugging" || got.Name != "openclaw-debugging" {
 		t.Fatalf("unexpected input identity: %#v", got)
 	}
-	if got.SourceProvider != "agentskill.sh" || got.SourceURL != "https://agentskill.sh/@openclaw/openclaw-debugging" {
+	if got.SourceProvider != "agentskill.sh" || got.SourceURL != "https://agentskill.sh/@openclaw/openclaw-debugging" || got.SourceAuthor != "openclaw" || got.SourceName != "openclaw-debugging" || got.SourcePath != "openclaw/openclaw-debugging" {
 		t.Fatalf("unexpected source: %s %s", got.SourceProvider, got.SourceURL)
 	}
 	if strings.Contains(got.Body, "agentskill.sh") || got.Body != "# OpenClaw Debugging\n\nUse logs." {
@@ -542,8 +542,8 @@ func TestImportSkillInputsFromGitHubRoot(t *testing.T) {
 	if inputs[0].Owner != "alice" || inputs[0].Slug != "workflow" || !strings.Contains(inputs[0].Body, "# Workflow") {
 		t.Fatalf("unexpected input: %#v", inputs[0])
 	}
-	if inputs[0].SourceProvider != "github" || inputs[0].SourceURL != "https://github.com/acme/skills/blob/main/workflow/SKILL.md" {
-		t.Fatalf("unexpected source: %s %s", inputs[0].SourceProvider, inputs[0].SourceURL)
+	if inputs[0].SourceProvider != "github" || inputs[0].SourceURL != "https://github.com/acme/skills/blob/main/workflow/SKILL.md" || inputs[0].SourceAuthor != "acme" || inputs[0].SourceName != "skills" || inputs[0].SourcePath != "workflow/SKILL.md" {
+		t.Fatalf("unexpected source: %#v", inputs[0])
 	}
 	if len(inputs[0].Files) != 1 || inputs[0].Files[0].Path != "references/guide.md" || inputs[0].Files[0].Content != "# Guide\n" {
 		t.Fatalf("unexpected supporting files: %#v", inputs[0].Files)
@@ -563,7 +563,7 @@ func TestImportSkillInputsFromGitHubSupportedSourceShapes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(inputs) != 1 || inputs[0].Slug != "raw-review" || inputs[0].SourceURL != "https://raw.githubusercontent.com/acme/skills/main/raw-review/SKILL.md" {
+		if len(inputs) != 1 || inputs[0].Slug != "raw-review" || inputs[0].SourceURL != "https://raw.githubusercontent.com/acme/skills/main/raw-review/SKILL.md" || inputs[0].SourceAuthor != "acme" || inputs[0].SourceName != "skills" || inputs[0].SourcePath != "raw-review/SKILL.md" || inputs[0].SourceRef != "main" {
 			t.Fatalf("unexpected raw input: %#v", inputs)
 		}
 	})
@@ -591,7 +591,7 @@ func TestImportSkillInputsFromGitHubSupportedSourceShapes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(inputs) != 1 || inputs[0].Slug != "workflow" || len(inputs[0].Files) != 1 || inputs[0].Files[0].Path != "references/guide.md" {
+		if len(inputs) != 1 || inputs[0].Slug != "workflow" || len(inputs[0].Files) != 1 || inputs[0].Files[0].Path != "references/guide.md" || inputs[0].SourcePath != "workflow/SKILL.md" || inputs[0].SourceRef != "main" {
 			t.Fatalf("unexpected explicit file input: %#v", inputs)
 		}
 	})
@@ -615,7 +615,7 @@ func TestImportSkillInputsFromGitHubSupportedSourceShapes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(inputs) != 1 || inputs[0].Slug != "single-skill" || inputs[0].SourceURL != "https://github.com/acme/single-skill/blob/main/SKILL.md" {
+		if len(inputs) != 1 || inputs[0].Slug != "single-skill" || inputs[0].SourceURL != "https://github.com/acme/single-skill/blob/main/SKILL.md" || inputs[0].SourceAuthor != "acme" || inputs[0].SourceName != "single-skill" || inputs[0].SourcePath != "SKILL.md" {
 			t.Fatalf("unexpected repo-root input: %#v", inputs)
 		}
 	})

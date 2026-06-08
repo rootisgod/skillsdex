@@ -68,6 +68,10 @@ func migrate(db *sql.DB) error {
 			pinned_install INTEGER NOT NULL DEFAULT 0,
 			source_provider TEXT,
 			source_url TEXT,
+			source_author TEXT,
+			source_name TEXT,
+			source_path TEXT,
+			source_ref TEXT,
 			current_revision_id TEXT,
 			archived_at TEXT,
 			created_at TEXT NOT NULL,
@@ -170,6 +174,18 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	if _, err := addColumnIfMissing(db, "skills", "source_url", "source_url TEXT"); err != nil {
+		return err
+	}
+	if _, err := addColumnIfMissing(db, "skills", "source_author", "source_author TEXT"); err != nil {
+		return err
+	}
+	if _, err := addColumnIfMissing(db, "skills", "source_name", "source_name TEXT"); err != nil {
+		return err
+	}
+	if _, err := addColumnIfMissing(db, "skills", "source_path", "source_path TEXT"); err != nil {
+		return err
+	}
+	if _, err := addColumnIfMissing(db, "skills", "source_ref", "source_ref TEXT"); err != nil {
 		return err
 	}
 	if _, err := addColumnIfMissing(db, "skills", "pinned_install", "pinned_install INTEGER NOT NULL DEFAULT 0"); err != nil {
@@ -1008,7 +1024,7 @@ func listInstallSetSkills(ctx context.Context, db *sql.DB, userID, slug string) 
 	if err != nil {
 		return nil, nil, err
 	}
-	rows, err := db.QueryContext(ctx, `SELECT s.id, s.owner_type, s.owner_id, s.owner_slug, s.slug, s.name, s.description, COALESCE(s.short_description,''), s.recommended_default, s.pinned_install, COALESCE(s.source_provider,''), COALESCE(s.source_url,''), COALESCE(s.current_revision_id,''), COALESCE(r.revision_number,0), COALESCE(s.archived_at,''), s.created_at, s.updated_at
+	rows, err := db.QueryContext(ctx, `SELECT s.id, s.owner_type, s.owner_id, s.owner_slug, s.slug, s.name, s.description, COALESCE(s.short_description,''), s.recommended_default, s.pinned_install, COALESCE(s.source_provider,''), COALESCE(s.source_url,''), COALESCE(s.source_author,''), COALESCE(s.source_name,''), COALESCE(s.source_path,''), COALESCE(s.source_ref,''), COALESCE(s.current_revision_id,''), COALESCE(r.revision_number,0), COALESCE(s.archived_at,''), s.created_at, s.updated_at
 		FROM install_set_skills ss
 		JOIN skills s ON s.id = ss.skill_id
 		LEFT JOIN skill_revisions r ON r.id = s.current_revision_id
@@ -1035,7 +1051,7 @@ func listSkills(ctx context.Context, db *sql.DB, userID string, includeArchived 
 
 func listSkillsFiltered(ctx context.Context, db *sql.DB, userID string, includeArchived bool, tag string) ([]Skill, error) {
 	tag = strings.TrimSpace(tag)
-	q := `SELECT s.id, s.owner_type, s.owner_id, s.owner_slug, s.slug, s.name, s.description, COALESCE(s.short_description,''), s.recommended_default, s.pinned_install, COALESCE(s.source_provider,''), COALESCE(s.source_url,''), COALESCE(s.current_revision_id,''), COALESCE(r.revision_number,0), COALESCE(s.archived_at,''), s.created_at, s.updated_at
+	q := `SELECT s.id, s.owner_type, s.owner_id, s.owner_slug, s.slug, s.name, s.description, COALESCE(s.short_description,''), s.recommended_default, s.pinned_install, COALESCE(s.source_provider,''), COALESCE(s.source_url,''), COALESCE(s.source_author,''), COALESCE(s.source_name,''), COALESCE(s.source_path,''), COALESCE(s.source_ref,''), COALESCE(s.current_revision_id,''), COALESCE(r.revision_number,0), COALESCE(s.archived_at,''), s.created_at, s.updated_at
 		FROM skills s LEFT JOIN skill_revisions r ON r.id = s.current_revision_id
 		WHERE s.owner_id = ?`
 	args := []any{userID}
@@ -1077,7 +1093,7 @@ func listSkillsFiltered(ctx context.Context, db *sql.DB, userID string, includeA
 }
 
 func getSkill(ctx context.Context, db *sql.DB, userID, owner, slug string) (*Skill, error) {
-	row := db.QueryRowContext(ctx, `SELECT s.id, s.owner_type, s.owner_id, s.owner_slug, s.slug, s.name, s.description, COALESCE(s.short_description,''), s.recommended_default, s.pinned_install, COALESCE(s.source_provider,''), COALESCE(s.source_url,''), COALESCE(s.current_revision_id,''), COALESCE(r.revision_number,0), COALESCE(s.archived_at,''), s.created_at, s.updated_at
+	row := db.QueryRowContext(ctx, `SELECT s.id, s.owner_type, s.owner_id, s.owner_slug, s.slug, s.name, s.description, COALESCE(s.short_description,''), s.recommended_default, s.pinned_install, COALESCE(s.source_provider,''), COALESCE(s.source_url,''), COALESCE(s.source_author,''), COALESCE(s.source_name,''), COALESCE(s.source_path,''), COALESCE(s.source_ref,''), COALESCE(s.current_revision_id,''), COALESCE(r.revision_number,0), COALESCE(s.archived_at,''), s.created_at, s.updated_at
 		FROM skills s LEFT JOIN skill_revisions r ON r.id = s.current_revision_id
 		WHERE s.owner_id = ? AND s.owner_slug = ? AND s.slug = ?`, userID, owner, slug)
 	s, err := scanSkill(row)
@@ -1094,7 +1110,7 @@ func getSkill(ctx context.Context, db *sql.DB, userID, owner, slug string) (*Ski
 func scanSkill(row scanner) (*Skill, error) {
 	var s Skill
 	var created, updated string
-	if err := row.Scan(&s.ID, &s.OwnerType, &s.OwnerID, &s.OwnerSlug, &s.Slug, &s.Name, &s.Description, &s.ShortDescription, &s.RecommendedDefault, &s.PinnedInstall, &s.SourceProvider, &s.SourceURL, &s.CurrentRevisionID, &s.RevisionNumber, &s.ArchivedAt, &created, &updated); err != nil {
+	if err := row.Scan(&s.ID, &s.OwnerType, &s.OwnerID, &s.OwnerSlug, &s.Slug, &s.Name, &s.Description, &s.ShortDescription, &s.RecommendedDefault, &s.PinnedInstall, &s.SourceProvider, &s.SourceURL, &s.SourceAuthor, &s.SourceName, &s.SourcePath, &s.SourceRef, &s.CurrentRevisionID, &s.RevisionNumber, &s.ArchivedAt, &created, &updated); err != nil {
 		return nil, err
 	}
 	s.CreatedAt = parseTime(created)
@@ -1119,9 +1135,9 @@ func createSkill(ctx context.Context, db *sql.DB, user *User, in SkillInput) (*S
 	defer tx.Rollback()
 	now := nowUTC().Format(time.RFC3339)
 	skillID := newID("skl")
-	sourceProvider, sourceURL := normalizedSource(in)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO skills (id, owner_type, owner_id, owner_slug, slug, name, description, short_description, recommended_default, pinned_install, source_provider, source_url, created_at, updated_at) VALUES (?, 'user', ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
-		skillID, user.ID, user.Username, in.Slug, strings.TrimSpace(in.Name), strings.TrimSpace(in.Description), strings.TrimSpace(in.ShortDescription), boolInt(in.RecommendedDefault), boolInt(in.PinnedInstall), sourceProvider, sourceURL, now, now); err != nil {
+	source := normalizedSource(in)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO skills (id, owner_type, owner_id, owner_slug, slug, name, description, short_description, recommended_default, pinned_install, source_provider, source_url, source_author, source_name, source_path, source_ref, created_at, updated_at) VALUES (?, 'user', ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
+		skillID, user.ID, user.Username, in.Slug, strings.TrimSpace(in.Name), strings.TrimSpace(in.Description), strings.TrimSpace(in.ShortDescription), boolInt(in.RecommendedDefault), boolInt(in.PinnedInstall), source.Provider, source.URL, source.Author, source.Name, source.Path, source.Ref, now, now); err != nil {
 		return nil, err
 	}
 	if err := setSkillTagsTx(ctx, tx, user.ID, skillID, in.Tags); err != nil {
@@ -1151,10 +1167,9 @@ func updateSkill(ctx context.Context, db *sql.DB, user *User, owner, slug string
 	if strings.TrimSpace(in.Name) == "" || strings.TrimSpace(in.Description) == "" {
 		return nil, errors.New("name and description are required")
 	}
-	sourceProvider, sourceURL := normalizedSource(in)
-	if !in.SourceExplicit && sourceProvider == "" && sourceURL == "" {
-		sourceProvider = s.SourceProvider
-		sourceURL = s.SourceURL
+	source := normalizedSource(in)
+	if !in.SourceExplicit && source.empty() {
+		source = sourceFromSkill(s)
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1169,8 +1184,8 @@ func updateSkill(ctx context.Context, db *sql.DB, user *User, owner, slug string
 	if err != nil {
 		return nil, err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE skills SET name = ?, description = ?, short_description = ?, recommended_default = ?, pinned_install = ?, source_provider = NULLIF(?, ''), source_url = NULLIF(?, ''), current_revision_id = ?, updated_at = ? WHERE id = ?`,
-		strings.TrimSpace(in.Name), strings.TrimSpace(in.Description), strings.TrimSpace(in.ShortDescription), boolInt(in.RecommendedDefault), boolInt(in.PinnedInstall), sourceProvider, sourceURL, revID, nowUTC().Format(time.RFC3339), s.ID)
+	_, err = tx.ExecContext(ctx, `UPDATE skills SET name = ?, description = ?, short_description = ?, recommended_default = ?, pinned_install = ?, source_provider = NULLIF(?, ''), source_url = NULLIF(?, ''), source_author = NULLIF(?, ''), source_name = NULLIF(?, ''), source_path = NULLIF(?, ''), source_ref = NULLIF(?, ''), current_revision_id = ?, updated_at = ? WHERE id = ?`,
+		strings.TrimSpace(in.Name), strings.TrimSpace(in.Description), strings.TrimSpace(in.ShortDescription), boolInt(in.RecommendedDefault), boolInt(in.PinnedInstall), source.Provider, source.URL, source.Author, source.Name, source.Path, source.Ref, revID, nowUTC().Format(time.RFC3339), s.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1205,20 +1220,55 @@ func updateSkillSource(ctx context.Context, db *sql.DB, userID, owner, slug stri
 	if err != nil {
 		return nil, err
 	}
-	sourceProvider, sourceURL := normalizedSource(in)
-	if sourceProvider == s.SourceProvider && sourceURL == s.SourceURL {
+	source := normalizedSource(in)
+	if source.equal(sourceFromSkill(s)) {
 		return s, nil
 	}
-	_, err = db.ExecContext(ctx, `UPDATE skills SET source_provider = NULLIF(?, ''), source_url = NULLIF(?, ''), updated_at = ? WHERE id = ?`,
-		sourceProvider, sourceURL, nowUTC().Format(time.RFC3339), s.ID)
+	_, err = db.ExecContext(ctx, `UPDATE skills SET source_provider = NULLIF(?, ''), source_url = NULLIF(?, ''), source_author = NULLIF(?, ''), source_name = NULLIF(?, ''), source_path = NULLIF(?, ''), source_ref = NULLIF(?, ''), updated_at = ? WHERE id = ?`,
+		source.Provider, source.URL, source.Author, source.Name, source.Path, source.Ref, nowUTC().Format(time.RFC3339), s.ID)
 	if err != nil {
 		return nil, err
 	}
 	return getSkill(ctx, db, userID, owner, slug)
 }
 
-func normalizedSource(in SkillInput) (string, string) {
-	return strings.TrimSpace(in.SourceProvider), strings.TrimSpace(in.SourceURL)
+type sourceMetadata struct {
+	Provider string
+	URL      string
+	Author   string
+	Name     string
+	Path     string
+	Ref      string
+}
+
+func normalizedSource(in SkillInput) sourceMetadata {
+	return sourceMetadata{
+		Provider: strings.TrimSpace(in.SourceProvider),
+		URL:      strings.TrimSpace(in.SourceURL),
+		Author:   strings.TrimSpace(in.SourceAuthor),
+		Name:     strings.TrimSpace(in.SourceName),
+		Path:     strings.TrimSpace(in.SourcePath),
+		Ref:      strings.TrimSpace(in.SourceRef),
+	}
+}
+
+func sourceFromSkill(s *Skill) sourceMetadata {
+	return sourceMetadata{
+		Provider: strings.TrimSpace(s.SourceProvider),
+		URL:      strings.TrimSpace(s.SourceURL),
+		Author:   strings.TrimSpace(s.SourceAuthor),
+		Name:     strings.TrimSpace(s.SourceName),
+		Path:     strings.TrimSpace(s.SourcePath),
+		Ref:      strings.TrimSpace(s.SourceRef),
+	}
+}
+
+func (m sourceMetadata) empty() bool {
+	return m.Provider == "" && m.URL == "" && m.Author == "" && m.Name == "" && m.Path == "" && m.Ref == ""
+}
+
+func (m sourceMetadata) equal(other sourceMetadata) bool {
+	return m.Provider == other.Provider && m.URL == other.URL && m.Author == other.Author && m.Name == other.Name && m.Path == other.Path && m.Ref == other.Ref
 }
 
 func normalizeTags(tags []string) ([]string, error) {

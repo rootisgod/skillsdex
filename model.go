@@ -26,6 +26,10 @@ type Skill struct {
 	PinnedInstall      bool      `json:"pinned_install"`
 	SourceProvider     string    `json:"source_provider,omitempty"`
 	SourceURL          string    `json:"source_url,omitempty"`
+	SourceAuthor       string    `json:"source_author,omitempty"`
+	SourceName         string    `json:"source_name,omitempty"`
+	SourcePath         string    `json:"source_path,omitempty"`
+	SourceRef          string    `json:"source_ref,omitempty"`
 	Tags               []string  `json:"tags,omitempty"`
 	CurrentRevisionID  string    `json:"latest_revision"`
 	RevisionNumber     int       `json:"revision_number"`
@@ -124,6 +128,10 @@ type SkillInput struct {
 	PinnedInstall      bool     `json:"pinned_install"`
 	SourceProvider     string   `json:"source_provider,omitempty"`
 	SourceURL          string   `json:"source_url,omitempty"`
+	SourceAuthor       string   `json:"source_author,omitempty"`
+	SourceName         string   `json:"source_name,omitempty"`
+	SourcePath         string   `json:"source_path,omitempty"`
+	SourceRef          string   `json:"source_ref,omitempty"`
 	SourceExplicit     bool     `json:"-"`
 	Tags               []string `json:"tags"`
 	TagsExplicit       bool     `json:"-"`
