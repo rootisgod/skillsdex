@@ -159,6 +159,20 @@ Or use the Taskfile helper:
 task prod:install-service
 ```
 
+From your workstation, build a Linux binary, upload it to the production server,
+restart the service, and verify the local HTTP listener:
+
+```bash
+task prod:deploy-binary
+```
+
+The remote deployment task defaults to `root@178.104.5.217` with
+`~/.ssh/ib_ssh`. Override those defaults when needed:
+
+```bash
+PROD_HOST=root@your-host PROD_SSH_KEY=~/.ssh/your-key task prod:deploy-binary
+```
+
 Start the app on loopback only:
 
 ```bash
@@ -341,6 +355,7 @@ sudo systemctl status skillsdex --no-pager
 Or:
 
 ```bash
+task prod:deploy-binary
 task prod:restart
 ```
 
@@ -355,6 +370,7 @@ Production task shortcuts:
 
 ```bash
 task prod:install-service
+task prod:deploy-binary
 task prod:status
 task prod:logs
 task prod:reset-admin-password

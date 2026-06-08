@@ -62,6 +62,61 @@ tasks:
     cmds:
       - go build -trimpath -ldflags="-s -w" -o skillsdex .
 
+  prod:build-linux-amd64:
+    desc: Build the production Linux amd64 binary for remote deployment
+    cmds:
+      - |
+        set -eu
+        mkdir -p dist
+        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/skillsdex-linux-amd64 .
+
+  prod:deploy-binary:
+    desc: Build, upload, and restart SkillsDex on the production server
+    cmds:
+      - task prod:build-linux-amd64
+      - |
+        set -eu
+        remote="${PROD_HOST:-root@178.104.5.217}"
+        key="${PROD_SSH_KEY:-$HOME/.ssh/ib_ssh}"
+        local_bin="${PROD_BINARY:-dist/skillsdex-linux-amd64}"
+        remote_tmp="/tmp/skillsdex.$(date -u +%Y%m%dT%H%M%SZ).new"
+
+        ssh -i "$key" -o BatchMode=yes "$remote" 'set -eu; test "$(uname -m)" = "x86_64"; command -v systemctl >/dev/null; systemctl is-active --quiet skillsdex'
+        scp -i "$key" -q "$local_bin" "$remote:$remote_tmp"
+        ssh -i "$key" -o BatchMode=yes "$remote" "set -eu
+          install -m 0755 '$remote_tmp' /usr/local/bin/skillsdex.next
+          rm -f '$remote_tmp'
+          if [ -x /usr/local/bin/skillsdex ]; then
+            cp /usr/local/bin/skillsdex /usr/local/bin/skillsdex.previous
+          fi
+          install -m 0755 /usr/local/bin/skillsdex.next /usr/local/bin/skillsdex
+          rm -f /usr/local/bin/skillsdex.next
+          rollback() {
+            if [ -x /usr/local/bin/skillsdex.previous ]; then
+              install -m 0755 /usr/local/bin/skillsdex.previous /usr/local/bin/skillsdex
+              systemctl restart skillsdex || true
+            fi
+          }
+          if ! systemctl restart skillsdex; then
+            rollback
+            exit 1
+          fi
+          if ! systemctl is-active --quiet skillsdex; then
+            rollback
+            exit 1
+          fi
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsS -I http://127.0.0.1:8765 >/dev/null 2>&1; then
+              systemctl status skillsdex --no-pager
+              exit 0
+            fi
+            sleep 0.5
+          done
+          systemctl status skillsdex --no-pager
+          rollback
+          exit 1
+        "
+
   prod:install-service:
     desc: Install the SkillsDex systemd service and binary
     cmds:

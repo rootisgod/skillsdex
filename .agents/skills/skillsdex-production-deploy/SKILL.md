@@ -154,6 +154,13 @@ After upload:
 ssh <host> 'sudo install -m 0755 ./skillsdex /usr/local/bin/skillsdex && sudo systemctl restart skillsdex && sudo systemctl status skillsdex --no-pager'
 ```
 
+From this repository, use the remote deployment task for the current production
+host:
+
+```bash
+task prod:deploy-binary
+```
+
 Rollback:
 
 ```bash
