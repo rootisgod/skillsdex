@@ -129,3 +129,28 @@ tasks:
     desc: Run Go tests
     cmds:
       - go test ./...
+
+  test-race:
+    desc: Run Go tests with the race detector
+    cmds:
+      - go test -race ./...
+
+  staticcheck:
+    desc: Run staticcheck
+    cmds:
+      - staticcheck ./...
+
+  coverage-critical:
+    desc: Check coverage for critical behavior surfaces
+    cmds:
+      - scripts/coverage_critical.sh
+
+  verify:
+    desc: Run the full pre-merge verification gate
+    cmds:
+      - go test ./...
+      - go vet ./...
+      - staticcheck ./...
+      - go test -race ./...
+      - task coverage-critical
+      - task e2e-first-run

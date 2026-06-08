@@ -421,17 +421,28 @@ Remaining high-level work:
 
 ## Checks
 
+Testing standards live in [`TESTING.md`](TESTING.md). Use the full gate before merging:
+
 ```bash
-task test
+task verify
+```
+
+For a faster local loop while developing a slice:
+
+```bash
+go test ./...
 task build
 task e2e-first-run
 ```
 
 `task e2e-first-run` starts SkillsDex on `127.0.0.1:18765` with temporary `HOME`, `SKILLSDEX_HOME`, cookies, and SQLite state. It exercises the default login, forced password change, setup page, one-time web token generation, CLI login, `doctor`, `doctor --fix-permissions`, `doctor --strict`, `skills`, `templates`, `mark`, named set setup preview, install dry-runs, `install-defaults`, `installed`, file-level `sync --dry-run` previews, modified-file protection with `--no`/`--yes`, and CLI backup export/inspect/restore dry-runs/restore.
 
-Equivalent Go commands:
+`task coverage-critical` checks the critical behavior surfaces named in `TESTING.md` instead of relying on a single flat coverage percentage.
+
+Equivalent core Go commands:
 
 ```bash
 go test ./...
+go vet ./...
 go build -o skillsdex .
 ```

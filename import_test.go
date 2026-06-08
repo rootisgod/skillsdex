@@ -288,6 +288,88 @@ func TestRefreshImportedSkillDryRunDoesNotUpdateRevision(t *testing.T) {
 	}
 }
 
+func TestRefreshImportedSkillAlreadyCurrentBehavior(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := createSkill(ctx, db, admin, SkillInput{
+		Owner:          "admin",
+		Slug:           "openclaw-debugging",
+		Name:           "openclaw-debugging",
+		Description:    "Use when debugging OpenClaw logs.",
+		SourceProvider: "agentskill.sh",
+		SourceURL:      "https://agentskill.sh/@openclaw/openclaw-debugging",
+		SourceExplicit: true,
+		Body:           "# OpenClaw Debugging\n\nCurrent instructions.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != "https://agentskill.sh/api/agent/skills/openclaw%2Fopenclaw-debugging/install" {
+			t.Fatalf("unexpected request: %s", r.URL.String())
+		}
+		return testResponse(http.StatusOK, `{
+			"slug": "openclaw/openclaw-debugging",
+			"name": "openclaw-debugging",
+			"description": "Use when debugging OpenClaw logs.",
+			"skillMd": "---\nname: openclaw-debugging\ndescription: Use when debugging OpenClaw logs.\n---\n\n# OpenClaw Debugging\n\nCurrent instructions.\n"
+		}`), nil
+	})}
+
+	preview, status, changes, err := refreshImportedSkill(ctx, db, client, admin, "admin", "openclaw-debugging", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "already current" || len(changes) != 0 || preview.RevisionNumber != created.RevisionNumber {
+		t.Fatalf("dry-run already-current result = status:%q changes:%#v revision:%d", status, changes, preview.RevisionNumber)
+	}
+
+	applied, status, changes, err := refreshImportedSkill(ctx, db, client, admin, "admin", "openclaw-debugging", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "already current" || len(changes) != 0 || applied.RevisionNumber != created.RevisionNumber {
+		t.Fatalf("apply already-current result = status:%q changes:%#v revision:%d", status, changes, applied.RevisionNumber)
+	}
+}
+
+func TestRefreshImportedSkillRequiresSourceMetadata(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := createSkill(ctx, db, admin, SkillInput{
+		Owner:       "admin",
+		Slug:        "local-review",
+		Name:        "local-review",
+		Description: "Use when testing local-only refresh rejection.",
+		Body:        "# Local Review\n\nNo upstream source.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, _, err = refreshImportedSkill(ctx, db, http.DefaultClient, admin, "admin", "local-review", true)
+	if err == nil || !strings.Contains(err.Error(), "skill has no source URL") {
+		t.Fatalf("refresh local skill err = %v, want source metadata error", err)
+	}
+}
+
 func TestRefreshImportedSkillReportsPackageFileChanges(t *testing.T) {
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
 	if err != nil {
@@ -466,6 +548,91 @@ func TestImportSkillInputsFromGitHubRoot(t *testing.T) {
 	if len(inputs[0].Files) != 1 || inputs[0].Files[0].Path != "references/guide.md" || inputs[0].Files[0].Content != "# Guide\n" {
 		t.Fatalf("unexpected supporting files: %#v", inputs[0].Files)
 	}
+}
+
+func TestImportSkillInputsFromGitHubSupportedSourceShapes(t *testing.T) {
+	t.Run("raw skill file", func(t *testing.T) {
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.String() != "https://raw.githubusercontent.com/acme/skills/main/raw-review/SKILL.md" {
+				t.Fatalf("unexpected request: %s", r.URL.String())
+			}
+			return testResponse(http.StatusOK, "---\nname: raw-review\ndescription: Use when importing a raw GitHub skill.\n---\n\n# Raw Review\n"), nil
+		})}
+
+		inputs, err := importSkillInputsFromGitHub(context.Background(), client, "https://raw.githubusercontent.com/acme/skills/main/raw-review/SKILL.md", "alice")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(inputs) != 1 || inputs[0].Slug != "raw-review" || inputs[0].SourceURL != "https://raw.githubusercontent.com/acme/skills/main/raw-review/SKILL.md" {
+			t.Fatalf("unexpected raw input: %#v", inputs)
+		}
+	})
+
+	t.Run("explicit skill file with supporting references", func(t *testing.T) {
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			switch r.URL.String() {
+			case "https://api.github.com/repos/acme/skills/contents/workflow/SKILL.md?ref=main":
+				return testResponse(http.StatusOK, `{"name":"SKILL.md","path":"workflow/SKILL.md","type":"file","download_url":"https://raw.githubusercontent.com/acme/skills/main/workflow/SKILL.md","html_url":"https://github.com/acme/skills/blob/main/workflow/SKILL.md"}`), nil
+			case "https://raw.githubusercontent.com/acme/skills/main/workflow/SKILL.md":
+				return testResponse(http.StatusOK, "---\nname: workflow\ndescription: Use when importing an explicit skill file.\n---\n\n# Workflow\n"), nil
+			case "https://api.github.com/repos/acme/skills/contents/workflow?ref=main":
+				return testResponse(http.StatusOK, `[{"name":"SKILL.md","path":"workflow/SKILL.md","type":"file","download_url":"https://raw.githubusercontent.com/acme/skills/main/workflow/SKILL.md"},{"name":"references","path":"workflow/references","type":"dir"}]`), nil
+			case "https://api.github.com/repos/acme/skills/contents/workflow/references?ref=main":
+				return testResponse(http.StatusOK, `[{"name":"guide.md","path":"workflow/references/guide.md","type":"file","download_url":"https://raw.githubusercontent.com/acme/skills/main/workflow/references/guide.md"}]`), nil
+			case "https://raw.githubusercontent.com/acme/skills/main/workflow/references/guide.md":
+				return testResponse(http.StatusOK, "# Guide\n"), nil
+			default:
+				t.Fatalf("unexpected request: %s", r.URL.String())
+				return nil, nil
+			}
+		})}
+
+		inputs, err := importSkillInputsFromGitHub(context.Background(), client, "https://github.com/acme/skills/blob/main/workflow/SKILL.md", "alice")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(inputs) != 1 || inputs[0].Slug != "workflow" || len(inputs[0].Files) != 1 || inputs[0].Files[0].Path != "references/guide.md" {
+			t.Fatalf("unexpected explicit file input: %#v", inputs)
+		}
+	})
+
+	t.Run("repository root skill file", func(t *testing.T) {
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			switch r.URL.String() {
+			case "https://api.github.com/repos/acme/single-skill/contents":
+				return testResponse(http.StatusOK, `[{"name":"SKILL.md","path":"SKILL.md","type":"file","download_url":"https://raw.githubusercontent.com/acme/single-skill/main/SKILL.md","html_url":"https://github.com/acme/single-skill/blob/main/SKILL.md"}]`), nil
+			case "https://api.github.com/repos/acme/single-skill/contents/SKILL.md":
+				return testResponse(http.StatusOK, `{"name":"SKILL.md","path":"SKILL.md","type":"file","download_url":"https://raw.githubusercontent.com/acme/single-skill/main/SKILL.md","html_url":"https://github.com/acme/single-skill/blob/main/SKILL.md"}`), nil
+			case "https://raw.githubusercontent.com/acme/single-skill/main/SKILL.md":
+				return testResponse(http.StatusOK, "---\nname: single-skill\ndescription: Use when importing a repo-root skill file.\n---\n\n# Single Skill\n"), nil
+			default:
+				t.Fatalf("unexpected request: %s", r.URL.String())
+				return nil, nil
+			}
+		})}
+
+		inputs, err := importSkillInputsFromGitHub(context.Background(), client, "https://github.com/acme/single-skill", "alice")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(inputs) != 1 || inputs[0].Slug != "single-skill" || inputs[0].SourceURL != "https://github.com/acme/single-skill/blob/main/SKILL.md" {
+			t.Fatalf("unexpected repo-root input: %#v", inputs)
+		}
+	})
+
+	t.Run("folder without skill file", func(t *testing.T) {
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.String() != "https://api.github.com/repos/acme/skills/contents/missing/SKILL.md?ref=main" {
+				t.Fatalf("unexpected request: %s", r.URL.String())
+			}
+			return testResponse(http.StatusNotFound, `{"message":"Not Found"}`), nil
+		})}
+
+		_, err := importSkillInputsFromGitHub(context.Background(), client, "https://github.com/acme/skills/tree/main/missing", "alice")
+		if err == nil || !strings.Contains(err.Error(), "no SKILL.md found") {
+			t.Fatalf("missing folder err = %v, want no SKILL.md found", err)
+		}
+	})
 }
 
 func testResponse(status int, body string) *http.Response {

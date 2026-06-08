@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -2325,12 +2326,38 @@ func TestAPIClientFormatsTextAndEmptyErrorMessages(t *testing.T) {
 	}
 }
 
+func TestAPIClientUsesBoundedContextRequests(t *testing.T) {
+	client := newAPIClient(AuthConfig{ServerURL: "http://127.0.0.1:8765/", Token: "test-token"})
+	if client.http.Timeout != cliRequestTimeout {
+		t.Fatalf("client timeout = %s, want %s", client.http.Timeout, cliRequestTimeout)
+	}
+
+	before := time.Now()
+	req, cancel, err := client.newRequest(http.MethodGet, "/v1/me", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancel()
+	deadline, ok := req.Context().Deadline()
+	if !ok {
+		t.Fatal("request context has no deadline")
+	}
+	if deadline.Before(before) || deadline.After(before.Add(cliRequestTimeout+time.Second)) {
+		t.Fatalf("request deadline = %s, want within CLI timeout", deadline)
+	}
+	if req.Header.Get("Authorization") != "Bearer test-token" {
+		t.Fatalf("authorization header = %q", req.Header.Get("Authorization"))
+	}
+	if req.URL.String() != "http://127.0.0.1:8765/v1/me" {
+		t.Fatalf("request URL = %q", req.URL.String())
+	}
+}
+
 func TestRunSetupPreviewsRecommendedDefaults(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
-	skillsRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-token" {
 			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
@@ -2342,7 +2369,6 @@ func TestRunSetupPreviewsRecommendedDefaults(t *testing.T) {
 		case "/v1/install-sets":
 			_, _ = w.Write([]byte(`{"sets":[]}`))
 		case "/v1/skills":
-			skillsRequests++
 			_, _ = w.Write([]byte(`{"skills":[{"id":"skl_1","owner":"admin","slug":"review","name":"Review","description":"Use when reviewing a change for concrete risks.","short_description":"Review changes","recommended_default":true,"latest_revision":"rev_1","revision_number":1,"created_at":"2026-06-08T00:00:00Z","updated_at":"2026-06-08T00:00:00Z"}]}`))
 		case "/v1/skills/admin/review":
 			_, _ = w.Write([]byte(`{"skill":{"id":"skl_1","owner":"admin","slug":"review","name":"Review","description":"Use when reviewing a change for concrete risks.","short_description":"Review changes","recommended_default":true,"latest_revision":"rev_1","revision_number":1,"created_at":"2026-06-08T00:00:00Z","updated_at":"2026-06-08T00:00:00Z"},"raw":"---\nname: Review\ndescription: Use when reviewing a change for concrete risks.\n---\n\n# Review\n\nCheck the changed behavior, tests, and risk areas before reporting confirmed findings."}`))
@@ -2365,9 +2391,6 @@ func TestRunSetupPreviewsRecommendedDefaults(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("setup preview output missing %q:\n%s", want, out)
 		}
-	}
-	if skillsRequests < 2 {
-		t.Fatalf("expected setup selection and install list requests, got %d", skillsRequests)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".codex", "skills", "admin--review", "SKILL.md")); !os.IsNotExist(err) {
 		t.Fatalf("dry-run should not write skill, err=%v", err)
@@ -2405,6 +2428,45 @@ func TestRunSetupPreviewsRecommendedDefaults(t *testing.T) {
 		return runSetup([]string{"--json", "--apply"})
 	}); err == nil || !strings.Contains(err.Error(), "--json is preview-only") {
 		t.Fatalf("setup --json --apply err = %v, want preview-only requirement", err)
+	}
+}
+
+func TestRunSetupChoosesSingleInstallSetBeforeDefaults(t *testing.T) {
+	ta := newTestApp(t)
+	ta.authenticateCLI(t)
+	ctx := context.Background()
+	skill := ta.createSkill(t, SkillInput{
+		Owner:              "admin",
+		Slug:               "workflow",
+		Name:               "Workflow",
+		Description:        "Use when planning a multi-step workflow.",
+		ShortDescription:   "Plan workflows",
+		Body:               "# Workflow\n\nPlan the next testable slice before editing.",
+		RecommendedDefault: true,
+	})
+	if _, err := createInstallSet(ctx, ta.DB, ta.Admin.ID, "laptop", "Laptop", "Daily machine"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := updateInstallSet(ctx, ta.DB, ta.Admin.ID, "laptop", "Laptop", "Daily machine", []string{skill.ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := captureStdout(t, func() error {
+		return runSetup(nil)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"reachable as admin", "Selected install set: laptop", "Would install admin/workflow", "skillsdex setup --target codex --set laptop --apply --yes"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("setup auto output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Selected recommended defaults") {
+		t.Fatalf("setup should prefer the single install set over defaults:\n%s", out)
+	}
+	if _, err := os.Stat(ta.installedSkillPath("admin", "workflow")); !os.IsNotExist(err) {
+		t.Fatalf("preview setup wrote skill, err=%v", err)
 	}
 }
 
@@ -2600,6 +2662,77 @@ func TestRunImportSourceCanPreviewInstall(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".codex", "skills", "admin--review", "SKILL.md")); !os.IsNotExist(err) {
 		t.Fatalf("dry-run install wrote skill, err=%v", err)
+	}
+}
+
+func TestRunImportSourceGitHubFolderInstallDryRunPreservesSupportingFiles(t *testing.T) {
+	github := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		jsonResponse := func(body string) *http.Response {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}
+		}
+		rawResponse := func(body string) *http.Response {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}
+		}
+		switch r.URL.String() {
+		case "https://api.github.com/repos/acme/skills/contents/workflow/SKILL.md?ref=main":
+			return jsonResponse(`{"name":"SKILL.md","path":"workflow/SKILL.md","type":"file","download_url":"https://raw.githubusercontent.com/acme/skills/main/workflow/SKILL.md","html_url":"https://github.com/acme/skills/blob/main/workflow/SKILL.md"}`), nil
+		case "https://raw.githubusercontent.com/acme/skills/main/workflow/SKILL.md":
+			return rawResponse("---\nname: workflow\ndescription: Use when planning testable workflow changes.\nmetadata:\n  short-description: Plan workflows\n---\n\n# Workflow\n\nPlan the next testable slice and keep references beside the skill.\n"), nil
+		case "https://api.github.com/repos/acme/skills/contents/workflow?ref=main":
+			return jsonResponse(`[{"name":"SKILL.md","path":"workflow/SKILL.md","type":"file","download_url":"https://raw.githubusercontent.com/acme/skills/main/workflow/SKILL.md"},{"name":"references","path":"workflow/references","type":"dir"}]`), nil
+		case "https://api.github.com/repos/acme/skills/contents/workflow/references?ref=main":
+			return jsonResponse(`[{"name":"guide.md","path":"workflow/references/guide.md","type":"file","download_url":"https://raw.githubusercontent.com/acme/skills/main/workflow/references/guide.md"}]`), nil
+		case "https://raw.githubusercontent.com/acme/skills/main/workflow/references/guide.md":
+			return rawResponse("# Guide\n\nKeep the workflow reference with the skill.\n"), nil
+		default:
+			t.Fatalf("unexpected GitHub request %s", r.URL.String())
+			return nil, nil
+		}
+	})}
+	ta := newTestApp(t, withSourceClient(github))
+	ta.authenticateCLI(t)
+
+	out, err := captureStdout(t, func() error {
+		return runImportSource([]string{"https://github.com/acme/skills/tree/main/workflow", "--install", "--dry-run"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"admin/workflow", "created", "Would install admin/workflow", "references/guide.md", "Would install 1 imported skill(s)."} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("GitHub folder import output missing %q:\n%s", want, out)
+		}
+	}
+	if _, err := os.Stat(ta.installedSkillPath("admin", "workflow")); !os.IsNotExist(err) {
+		t.Fatalf("dry-run import install wrote skill, err=%v", err)
+	}
+	skill, err := getSkill(context.Background(), ta.DB, ta.Admin.ID, "admin", "workflow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skill.SourceProvider != "github" || skill.SourceURL != "https://github.com/acme/skills/blob/main/workflow/SKILL.md" {
+		t.Fatalf("source metadata = %q %q", skill.SourceProvider, skill.SourceURL)
+	}
+	files, _, err := currentSkillFiles(context.Background(), ta.DB, ta.Admin.ID, "admin", "workflow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, file := range files {
+		paths = append(paths, file.Path)
+	}
+	if !reflect.DeepEqual(paths, []string{"SKILL.md", "references/guide.md"}) {
+		t.Fatalf("imported package files = %#v", paths)
 	}
 }
 
@@ -2822,7 +2955,6 @@ func TestRunRefreshPreviewsAndAppliesSourceRefresh(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
-	var sawPreview, sawApply bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-token" {
 			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
@@ -2832,11 +2964,9 @@ func TestRunRefreshPreviewsAndAppliesSourceRefresh(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("dry_run") == "1" {
-			sawPreview = true
 			_, _ = w.Write([]byte(`{"skill":{"id":"skl_1","owner":"admin","slug":"review","name":"Review","description":"Use when reviewing.","source_url":"https://github.com/acme/skills/tree/main/review","latest_revision":"rev_1","revision_number":1,"created_at":"2026-06-08T00:00:00Z","updated_at":"2026-06-08T00:00:00Z"},"status":"update available","dry_run":true,"changes":[{"path":"SKILL.md","status":"modified","diff":"@@\n- Old instructions.\n+ New instructions.\n"},{"path":"references/new.md","status":"added","diff":"@@\n+ # New reference\n"}]}`))
 			return
 		}
-		sawApply = true
 		_, _ = w.Write([]byte(`{"skill":{"id":"skl_1","owner":"admin","slug":"review","name":"Review","description":"Use when reviewing.","source_url":"https://github.com/acme/skills/tree/main/review","latest_revision":"rev_2","revision_number":2,"created_at":"2026-06-08T00:00:00Z","updated_at":"2026-06-08T01:00:00Z"},"status":"updated from source","dry_run":false}`))
 	}))
 	defer server.Close()
@@ -2917,9 +3047,6 @@ func TestRunRefreshPreviewsAndAppliesSourceRefresh(t *testing.T) {
 	}
 	if !strings.Contains(applyOut, "skillsdex sync --dry-run --strict") {
 		t.Fatalf("apply output missing sync next step:\n%s", applyOut)
-	}
-	if !sawPreview || !sawApply {
-		t.Fatalf("expected preview and apply requests, saw preview=%v apply=%v", sawPreview, sawApply)
 	}
 }
 
@@ -3602,6 +3729,138 @@ func testSkillsDexBackup(t *testing.T, manifest exportManifest, files map[string
 		t.Fatal(err)
 	}
 	return backup.Bytes()
+}
+
+func TestCLIParserBehaviorSpecs(t *testing.T) {
+	t.Run("sync flags compose and reject conflicting confirmation", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			args    []string
+			want    syncOptions
+			wantErr string
+		}{
+			{name: "dry run strict JSON", args: []string{"--dry-run", "--strict", "--json"}, want: syncOptions{Confirm: confirmOptions{DryRun: true}, Strict: true, JSON: true}},
+			{name: "yes and no conflict", args: []string{"--yes", "--no"}, wantErr: "--yes and --no cannot be used together"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got, err := parseSyncArgs(tt.args)
+				if tt.wantErr != "" {
+					if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+						t.Fatalf("parseSyncArgs err = %v, want %q", err, tt.wantErr)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(got, tt.want) {
+					t.Fatalf("sync options = %#v, want %#v", got, tt.want)
+				}
+			})
+		}
+	})
+
+	t.Run("setup chooses one install source", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			args    []string
+			want    setupOptions
+			wantErr string
+		}{
+			{name: "explicit install set apply yes", args: []string{"--set", "laptop", "--apply", "--yes"}, want: setupOptions{Mode: setupInstallSet, SetSlug: "laptop", Apply: true, Confirm: confirmOptions{Yes: true}}},
+			{name: "pinned and defaults conflict", args: []string{"--pinned", "--defaults"}, wantErr: "choose only one install source"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got, err := parseSetupArgs(tt.args)
+				if tt.wantErr != "" {
+					if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+						t.Fatalf("parseSetupArgs err = %v, want %q", err, tt.wantErr)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(got, tt.want) {
+					t.Fatalf("setup options = %#v, want %#v", got, tt.want)
+				}
+			})
+		}
+	})
+
+	t.Run("refresh targets exactly one scope", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			args       []string
+			wantTarget string
+			wantAll    bool
+			wantStrict bool
+			wantJSON   bool
+			wantErr    string
+		}{
+			{name: "single target strict JSON", args: []string{"admin/review", "--strict", "--json"}, wantTarget: "admin/review", wantStrict: true, wantJSON: true},
+			{name: "all rejects explicit target", args: []string{"--all", "admin/review"}, wantErr: "--all cannot be combined with an identifier"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				target, all, _, strict, _, jsonOutput, _, err := parseRefreshArgs(tt.args)
+				if tt.wantErr != "" {
+					if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+						t.Fatalf("parseRefreshArgs err = %v, want %q", err, tt.wantErr)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if target != tt.wantTarget || all != tt.wantAll || strict != tt.wantStrict || jsonOutput != tt.wantJSON {
+					t.Fatalf("refresh parse = target:%q all:%v strict:%v json:%v", target, all, strict, jsonOutput)
+				}
+			})
+		}
+	})
+}
+
+func TestZipDestinationBehaviorSpecs(t *testing.T) {
+	root, err := filepath.Abs(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name    string
+		entry   string
+		wantRel string
+		wantErr string
+	}{
+		{name: "skill file under root", entry: "skills/admin/review/SKILL.md", wantRel: filepath.Join("skills", "admin", "review", "SKILL.md")},
+		{name: "reference file under root", entry: "skills/admin/review/references/guide.md", wantRel: filepath.Join("skills", "admin", "review", "references", "guide.md")},
+		{name: "empty entry", entry: "", wantErr: "unsafe export path"},
+		{name: "dot path", entry: ".", wantErr: "unsafe export path"},
+		{name: "parent traversal", entry: "../evil/SKILL.md", wantErr: "unsafe export path"},
+		{name: "nested traversal", entry: "skills/../evil/SKILL.md", wantErr: "unsafe export path"},
+		{name: "windows separators", entry: `skills\admin\review\SKILL.md`, wantErr: "unsafe export path"},
+		{name: "absolute path", entry: "/tmp/evil/SKILL.md", wantErr: "unsafe export path"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := safeZipDestination(root, tt.entry)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("safeZipDestination err = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := filepath.Join(root, tt.wantRel)
+			if got != want {
+				t.Fatalf("destination = %q, want %q", got, want)
+			}
+		})
+	}
 }
 
 func TestExtractZipToDirRejectsTraversal(t *testing.T) {

@@ -61,15 +61,18 @@ func runServe(addr, dbPath string) error {
 	localURL := "http://127.0.0.1" + addr[strings.LastIndex(addr, ":"):]
 	log.Printf("skillsdex web/API listening on http://%s", addr)
 	log.Printf("open %s", localURL)
-	server := &http.Server{
+	return newHTTPServer(addr, mux).ListenAndServe()
+}
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	return server.ListenAndServe()
 }
 
 func (a *app) routes(mux *http.ServeMux) {

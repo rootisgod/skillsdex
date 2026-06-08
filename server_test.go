@@ -52,6 +52,20 @@ func csrfMultipart(t *testing.T, db *sql.DB, session string, data []byte) (*byte
 	return &body, mw.FormDataContentType()
 }
 
+func TestHTTPServerUsesBoundedTimeouts(t *testing.T) {
+	mux := http.NewServeMux()
+	server := newHTTPServer("127.0.0.1:0", mux)
+	if server.Addr != "127.0.0.1:0" {
+		t.Fatalf("server addr = %q", server.Addr)
+	}
+	if server.Handler != mux {
+		t.Fatal("server handler was not installed")
+	}
+	if server.ReadHeaderTimeout <= 0 || server.ReadTimeout <= 0 || server.WriteTimeout <= 0 || server.IdleTimeout <= 0 {
+		t.Fatalf("server timeouts must be bounded: readHeader=%s read=%s write=%s idle=%s", server.ReadHeaderTimeout, server.ReadTimeout, server.WriteTimeout, server.IdleTimeout)
+	}
+}
+
 func TestHelpPageRequiresAuthAndRendersReference(t *testing.T) {
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
 	if err != nil {
@@ -167,6 +181,58 @@ func TestWebPostRequiresCSRF(t *testing.T) {
 	mux.ServeHTTP(logoutW, logoutReq)
 	if logoutW.Code != http.StatusFound || logoutW.Header().Get("Location") != "/login" {
 		t.Fatalf("logout with csrf = %d location %q", logoutW.Code, logoutW.Header().Get("Location"))
+	}
+}
+
+func TestValidCSRFBehaviorSpecs(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	admin, err := getUserByUsername(context.Background(), db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := createWebSession(context.Background(), db, admin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := csrfTokenForSession(context.Background(), db, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{db: db}
+
+	headerReq := httptest.NewRequest(http.MethodPost, "/tokens", nil)
+	headerReq.Header.Set("X-CSRF-Token", token)
+	if !a.validCSRF(headerReq, session) {
+		t.Fatal("expected header CSRF token to be accepted")
+	}
+
+	mismatchReq := httptest.NewRequest(http.MethodPost, "/tokens", nil)
+	mismatchReq.Header.Set("X-CSRF-Token", token+"extra")
+	if a.validCSRF(mismatchReq, session) {
+		t.Fatal("expected length-mismatched CSRF token to be rejected")
+	}
+
+	malformedFormReq := httptest.NewRequest(http.MethodPost, "/tokens", strings.NewReader("%zz"))
+	malformedFormReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if a.validCSRF(malformedFormReq, session) {
+		t.Fatal("expected malformed form body to be rejected")
+	}
+
+	malformedMultipartReq := httptest.NewRequest(http.MethodPost, "/import/restore", strings.NewReader("not multipart"))
+	malformedMultipartReq.Header.Set("Content-Type", "multipart/form-data")
+	if a.validCSRF(malformedMultipartReq, session) {
+		t.Fatal("expected malformed multipart body to be rejected")
+	}
+
+	validReq := httptest.NewRequest(http.MethodPost, "/tokens", strings.NewReader("csrf_token="+url.QueryEscape(token)))
+	validReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if a.validCSRF(validReq, "missing-session") {
+		t.Fatal("expected unknown session CSRF token to be rejected")
 	}
 }
 
