@@ -15,6 +15,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const minPasswordLength = 12
+
 func openDB(path string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -210,15 +212,58 @@ func migrate(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	if addedCSRF {
-		if _, err := db.Exec(`UPDATE web_sessions SET csrf_token = token WHERE csrf_token = ''`); err != nil {
-			return err
-		}
+	if err := migrateWebSessionTokens(db, addedCSRF); err != nil {
+		return err
 	}
 	if err := ensureDefaultAdmin(db); err != nil {
 		return err
 	}
 	return ensureDefaultSkills(db, addedRecommendedDefault)
+}
+
+func migrateWebSessionTokens(db *sql.DB, addedCSRF bool) error {
+	rows, err := db.Query(`SELECT token, COALESCE(csrf_token, '') FROM web_sessions`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type pendingSession struct {
+		token string
+		hash  string
+		csrf  string
+	}
+	var pending []pendingSession
+	for rows.Next() {
+		var p pendingSession
+		if err := rows.Scan(&p.token, &p.csrf); err != nil {
+			return err
+		}
+		changed := false
+		p.hash = p.token
+		if !strings.HasPrefix(p.token, "sha256:") {
+			p.hash = sessionTokenHash(p.token)
+			changed = true
+		}
+		if strings.TrimSpace(p.csrf) == "" || (addedCSRF && p.csrf == p.token) {
+			p.csrf = newToken()
+			changed = true
+		}
+		if changed {
+			pending = append(pending, p)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, p := range pending {
+		if _, err := db.Exec(`UPDATE web_sessions SET token = ?, csrf_token = ? WHERE token = ?`, p.hash, p.csrf, p.token); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func migrateAPITokenHashes(db *sql.DB) error {
@@ -873,8 +918,8 @@ func createUser(ctx context.Context, db *sql.DB, username, email, password strin
 	if err := validateSlug("username", username); err != nil {
 		return err
 	}
-	if strings.TrimSpace(password) == "" {
-		return errors.New("password is required")
+	if err := validatePassword(password); err != nil {
+		return err
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -886,6 +931,25 @@ func createUser(ctx context.Context, db *sql.DB, username, email, password strin
 }
 
 func updateUser(ctx context.Context, db *sql.DB, id, email, password string, isAdmin, deactivated bool) error {
+	current, err := getUserByID(ctx, db, id)
+	if err != nil {
+		return err
+	}
+	if current.IsAdmin && (!isAdmin || deactivated) {
+		remaining, err := activeAdminCountExcluding(ctx, db, id)
+		if err != nil {
+			return err
+		}
+		if remaining == 0 {
+			return errors.New("cannot remove or deactivate the last active admin")
+		}
+	}
+	passwordChanged := strings.TrimSpace(password) != ""
+	if passwordChanged {
+		if err := validatePassword(password); err != nil {
+			return err
+		}
+	}
 	if strings.TrimSpace(password) != "" {
 		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {
@@ -893,11 +957,17 @@ func updateUser(ctx context.Context, db *sql.DB, id, email, password string, isA
 		}
 		_, err = db.ExecContext(ctx, `UPDATE users SET password_hash = ?, must_change_password = 0, is_admin = ?, email = NULLIF(?, ''), deactivated_at = ? WHERE id = ?`,
 			string(hash), boolInt(isAdmin), strings.TrimSpace(email), deactivatedAt(deactivated), id)
+	} else {
+		_, err = db.ExecContext(ctx, `UPDATE users SET is_admin = ?, email = NULLIF(?, ''), deactivated_at = ? WHERE id = ?`,
+			boolInt(isAdmin), strings.TrimSpace(email), deactivatedAt(deactivated), id)
+	}
+	if err != nil {
 		return err
 	}
-	_, err := db.ExecContext(ctx, `UPDATE users SET is_admin = ?, email = NULLIF(?, ''), deactivated_at = ? WHERE id = ?`,
-		boolInt(isAdmin), strings.TrimSpace(email), deactivatedAt(deactivated), id)
-	return err
+	if deactivated || passwordChanged {
+		return revokeUserAccess(ctx, db, id)
+	}
+	return nil
 }
 
 func setUserMustChangePassword(ctx context.Context, db *sql.DB, userID string, required bool) error {
@@ -906,8 +976,8 @@ func setUserMustChangePassword(ctx context.Context, db *sql.DB, userID string, r
 }
 
 func setUserPassword(ctx context.Context, db *sql.DB, userID, password string) error {
-	if len(strings.TrimSpace(password)) < 12 {
-		return errors.New("password must be at least 12 characters")
+	if err := validatePassword(password); err != nil {
+		return err
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -915,6 +985,30 @@ func setUserPassword(ctx context.Context, db *sql.DB, userID, password string) e
 	}
 	_, err = db.ExecContext(ctx, `UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?`, string(hash), userID)
 	return err
+}
+
+func defaultAdminPasswordActive(ctx context.Context, db *sql.DB) (bool, error) {
+	u, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		return false, err
+	}
+	if u.DeactivatedAt != nil {
+		return false, nil
+	}
+	return bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte("admin")) == nil, nil
+}
+
+func validatePassword(password string) error {
+	if len(strings.TrimSpace(password)) < minPasswordLength {
+		return fmt.Errorf("password must be at least %d characters", minPasswordLength)
+	}
+	return nil
+}
+
+func activeAdminCountExcluding(ctx context.Context, db *sql.DB, excludedUserID string) (int, error) {
+	var count int
+	err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE is_admin = 1 AND deactivated_at IS NULL AND id <> ?`, excludedUserID).Scan(&count)
+	return count, err
 }
 
 func revokeUserAccess(ctx context.Context, db *sql.DB, userID string) error {
@@ -938,25 +1032,25 @@ func createWebSession(ctx context.Context, db *sql.DB, userID string) (string, e
 	csrfToken := newToken()
 	now := nowUTC()
 	_, err := db.ExecContext(ctx, `INSERT INTO web_sessions (token, user_id, csrf_token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`,
-		token, userID, csrfToken, now.Format(time.RFC3339), now.Add(30*24*time.Hour).Format(time.RFC3339))
+		sessionTokenHash(token), userID, csrfToken, now.Format(time.RFC3339), now.Add(30*24*time.Hour).Format(time.RFC3339))
 	return token, err
 }
 
 func userForSession(ctx context.Context, db *sql.DB, token string) (*User, error) {
 	row := db.QueryRowContext(ctx, `SELECT u.id, u.username, u.password_hash, u.is_admin, u.must_change_password, COALESCE(u.deactivated_at,''), COALESCE(u.email,''), u.created_at
 		FROM web_sessions s JOIN users u ON u.id = s.user_id
-		WHERE s.token = ? AND s.expires_at > ? AND u.deactivated_at IS NULL`, token, nowUTC().Format(time.RFC3339))
+		WHERE s.token = ? AND s.expires_at > ? AND u.deactivated_at IS NULL`, sessionTokenHash(token), nowUTC().Format(time.RFC3339))
 	return scanUser(row)
 }
 
 func deleteWebSession(ctx context.Context, db *sql.DB, token string) error {
-	_, err := db.ExecContext(ctx, `DELETE FROM web_sessions WHERE token = ?`, token)
+	_, err := db.ExecContext(ctx, `DELETE FROM web_sessions WHERE token = ?`, sessionTokenHash(token))
 	return err
 }
 
 func csrfTokenForSession(ctx context.Context, db *sql.DB, token string) (string, error) {
 	var csrfToken string
-	err := db.QueryRowContext(ctx, `SELECT csrf_token FROM web_sessions WHERE token = ? AND expires_at > ?`, token, nowUTC().Format(time.RFC3339)).Scan(&csrfToken)
+	err := db.QueryRowContext(ctx, `SELECT csrf_token FROM web_sessions WHERE token = ? AND expires_at > ?`, sessionTokenHash(token), nowUTC().Format(time.RFC3339)).Scan(&csrfToken)
 	return csrfToken, err
 }
 

@@ -6,10 +6,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-DynamicUser=yes
+User=skillsdex
+Group=skillsdex
 StateDirectory=skillsdex
 Environment=SKILLSDEX_HOME=/var/lib/skillsdex
-ExecStart=/usr/local/bin/skillsdex serve --addr 127.0.0.1:8765 --db /var/lib/skillsdex/skillsdex.db
+ExecStart=/usr/local/bin/skillsdex serve --addr 127.0.0.1:8765 --db /var/lib/skillsdex/skillsdex.db --trusted-proxy 127.0.0.1
 Restart=on-failure
 RestartSec=5s
 

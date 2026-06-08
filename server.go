@@ -22,14 +22,18 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
 type app struct {
-	db         *sql.DB
-	httpClient httpDoer
+	db             *sql.DB
+	httpClient     httpDoer
+	trustedProxies []*net.IPNet
+	loginMu        sync.Mutex
+	loginFailures  map[string]loginAttempt
 }
 
 var defaultSourceHTTPClient = &http.Client{Timeout: 30 * time.Second}
@@ -38,7 +42,19 @@ type ctxKey string
 
 const userKey ctxKey = "user"
 
-func runServe(addr, dbPath string) error {
+const (
+	loginFailureLimit  = 5
+	loginFailureWindow = 15 * time.Minute
+	loginLockout       = 15 * time.Minute
+)
+
+type loginAttempt struct {
+	Count       int
+	First       time.Time
+	LockedUntil time.Time
+}
+
+func runServe(addr, dbPath string, trustedProxyCIDRs []string) error {
 	if dbPath == "" {
 		dir, err := skillsdexDir()
 		if err != nil {
@@ -54,14 +70,21 @@ func runServe(addr, dbPath string) error {
 		return dbPathError(dbPath, err)
 	}
 	defer db.Close()
+	if err := requireSafeBootstrap(context.Background(), db, addr); err != nil {
+		return err
+	}
+	trustedProxies, err := parseTrustedProxies(trustedProxyCIDRs)
+	if err != nil {
+		return err
+	}
 
-	a := &app{db: db}
+	a := &app{db: db, trustedProxies: trustedProxies}
 	mux := http.NewServeMux()
 	a.routes(mux)
 	localURL := "http://127.0.0.1" + addr[strings.LastIndex(addr, ":"):]
 	log.Printf("skillsdex web/API listening on http://%s", addr)
 	log.Printf("open %s", localURL)
-	return newHTTPServer(addr, mux).ListenAndServe()
+	return newHTTPServer(addr, a.securityHeaders(mux)).ListenAndServe()
 }
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
@@ -73,6 +96,79 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+}
+
+func requireSafeBootstrap(ctx context.Context, db *sql.DB, addr string) error {
+	active, err := defaultAdminPasswordActive(ctx, db)
+	if err != nil {
+		return err
+	}
+	if active && isPublicBind(addr) {
+		return errors.New("refusing to serve on a public address while the default admin/admin password is active; bind to 127.0.0.1 for first setup or run `skillsdex admin reset-password` locally")
+	}
+	return nil
+}
+
+func isPublicBind(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = strings.TrimSpace(addr)
+	}
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		return true
+	}
+	if strings.EqualFold(host, "localhost") {
+		return false
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return true
+	}
+	return !ip.IsLoopback()
+}
+
+func parseTrustedProxies(raw []string) ([]*net.IPNet, error) {
+	var proxies []*net.IPNet
+	for _, value := range raw {
+		for _, part := range strings.Split(value, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if !strings.Contains(part, "/") {
+				ip := net.ParseIP(part)
+				if ip == nil {
+					return nil, fmt.Errorf("invalid trusted proxy %q", part)
+				}
+				if ip.To4() != nil {
+					part += "/32"
+				} else {
+					part += "/128"
+				}
+			}
+			_, network, err := net.ParseCIDR(part)
+			if err != nil {
+				return nil, fmt.Errorf("invalid trusted proxy %q", part)
+			}
+			proxies = append(proxies, network)
+		}
+	}
+	return proxies, nil
+}
+
+func (a *app) securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; object-src 'none'")
+		if a.isSecureRequest(r) {
+			h.Set("Strict-Transport-Security", "max-age=31536000")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (a *app) routes(mux *http.ServeMux) {
@@ -286,12 +382,21 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 		a.render(w, r, nil, "Login", loginForm("Invalid form."))
 		return
 	}
-	u, err := getUserByUsername(r.Context(), a.db, r.FormValue("username"))
+	username := strings.TrimSpace(r.FormValue("username"))
+	if blockedUntil, blocked := a.loginBlocked(r, username); blocked {
+		a.audit(r, nil, "login_rate_limited", "user", "", username, map[string]any{"blocked_until": blockedUntil.Format(time.RFC3339)})
+		w.WriteHeader(http.StatusTooManyRequests)
+		a.render(w, r, nil, "Login", loginForm("Too many failed login attempts. Try again later."))
+		return
+	}
+	u, err := getUserByUsername(r.Context(), a.db, username)
 	if err != nil || u.DeactivatedAt != nil || bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(r.FormValue("password"))) != nil {
-		a.audit(r, nil, "login_failed", "user", "", strings.TrimSpace(r.FormValue("username")), nil)
+		a.recordLoginFailure(r, username)
+		a.audit(r, nil, "login_failed", "user", "", username, nil)
 		a.render(w, r, nil, "Login", loginForm("Invalid username or password."))
 		return
 	}
+	a.recordLoginSuccess(r, username)
 	token, err := createWebSession(r.Context(), a.db, u.ID)
 	if err != nil {
 		http.Error(w, "session error", http.StatusInternalServerError)
@@ -305,9 +410,68 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		redirectTo = "/setup/password"
 	}
-	http.SetCookie(w, sessionCookie(r, token, 0))
+	http.SetCookie(w, a.sessionCookie(r, token, 0))
 	a.audit(r, u, "login", "user", u.ID, u.Username, map[string]any{"password_change_required": redirectTo == "/setup/password"})
 	http.Redirect(w, r, redirectTo, http.StatusFound)
+}
+
+func (a *app) loginBlocked(r *http.Request, username string) (time.Time, bool) {
+	a.loginMu.Lock()
+	defer a.loginMu.Unlock()
+	if a.loginFailures == nil {
+		return time.Time{}, false
+	}
+	now := nowUTC()
+	for _, key := range a.loginRateKeys(r, username) {
+		attempt := a.loginFailures[key]
+		if attempt.LockedUntil.After(now) {
+			return attempt.LockedUntil, true
+		}
+		if !attempt.First.IsZero() && now.Sub(attempt.First) > loginFailureWindow && attempt.LockedUntil.IsZero() {
+			delete(a.loginFailures, key)
+		}
+	}
+	return time.Time{}, false
+}
+
+func (a *app) recordLoginFailure(r *http.Request, username string) {
+	a.loginMu.Lock()
+	defer a.loginMu.Unlock()
+	if a.loginFailures == nil {
+		a.loginFailures = map[string]loginAttempt{}
+	}
+	now := nowUTC()
+	for _, key := range a.loginRateKeys(r, username) {
+		attempt := a.loginFailures[key]
+		if attempt.First.IsZero() || now.Sub(attempt.First) > loginFailureWindow {
+			attempt = loginAttempt{First: now}
+		}
+		attempt.Count++
+		if attempt.Count >= loginFailureLimit {
+			attempt.LockedUntil = now.Add(loginLockout)
+		}
+		a.loginFailures[key] = attempt
+	}
+}
+
+func (a *app) recordLoginSuccess(r *http.Request, username string) {
+	a.loginMu.Lock()
+	defer a.loginMu.Unlock()
+	if a.loginFailures == nil {
+		return
+	}
+	for _, key := range a.loginRateKeys(r, username) {
+		delete(a.loginFailures, key)
+	}
+}
+
+func (a *app) loginRateKeys(r *http.Request, username string) []string {
+	ip := a.remoteAddr(r)
+	if ip == "" {
+		ip = "unknown"
+	}
+	username = strings.ToLower(strings.TrimSpace(username))
+	return []string{"ip:" + ip, "user:" + username + "|ip:" + ip}
 }
 
 func (a *app) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -315,7 +479,7 @@ func (a *app) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie("skillsdex_session"); err == nil {
 		_ = deleteWebSession(r.Context(), a.db, c.Value)
 	}
-	http.SetCookie(w, sessionCookie(r, "", -1))
+	http.SetCookie(w, a.sessionCookie(r, "", -1))
 	a.audit(r, u, "logout", "user", u.ID, u.Username, nil)
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
@@ -333,7 +497,7 @@ func (a *app) audit(r *http.Request, actor *User, action, targetType, targetID, 
 		TargetID:    targetID,
 		TargetLabel: targetLabel,
 		DetailJSON:  detailJSON,
-		RemoteAddr:  remoteAddr(r),
+		RemoteAddr:  a.remoteAddr(r),
 		UserAgent:   r.UserAgent(),
 	}
 	if actor != nil {
@@ -345,7 +509,18 @@ func (a *app) audit(r *http.Request, actor *User, action, targetType, targetID, 
 	}
 }
 
-func remoteAddr(r *http.Request) string {
+func (a *app) remoteAddr(r *http.Request) string {
+	if a.isTrustedProxyRequest(r) {
+		for _, forwarded := range strings.Split(r.Header.Get("X-Forwarded-For"), ",") {
+			forwarded = strings.TrimSpace(forwarded)
+			if forwarded == "" {
+				continue
+			}
+			if ip := net.ParseIP(forwarded); ip != nil {
+				return ip.String()
+			}
+		}
+	}
 	host := r.RemoteAddr
 	if strings.TrimSpace(host) == "" {
 		return ""
@@ -364,12 +539,39 @@ func sessionCookie(r *http.Request, value string, maxAge int) *http.Cookie {
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   isSecureRequest(r),
+		Secure:   r.TLS != nil,
 	}
 }
 
-func isSecureRequest(r *http.Request) bool {
-	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+func (a *app) sessionCookie(r *http.Request, value string, maxAge int) *http.Cookie {
+	c := sessionCookie(r, value, maxAge)
+	c.Secure = a.isSecureRequest(r)
+	return c
+}
+
+func (a *app) isSecureRequest(r *http.Request) bool {
+	return r.TLS != nil || (a.isTrustedProxyRequest(r) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"))
+}
+
+func (a *app) isTrustedProxyRequest(r *http.Request) bool {
+	if len(a.trustedProxies) == 0 {
+		return false
+	}
+	host := strings.TrimSpace(r.RemoteAddr)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, network := range a.trustedProxies {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *app) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
@@ -1883,7 +2085,7 @@ func usersPage(users []User, msg string) template.HTML {
 	b.WriteString(`</tbody></table></section><section class="panel sticky"><div class="panel-head"><div class="panel-icon">` + icon("users") + `</div><div><h2>Create User</h2><p>Add another operator account.</p></div></div><form method="post" action="/admin/users">
 		<label>Username <input name="username" required pattern="[a-z0-9][a-z0-9-]{0,62}"></label>
 		<label>Email <input name="email" type="email"></label>
-		<label>Password <input name="password" type="password" required></label>
+		<label>Password <input name="password" type="password" minlength="12" required></label>
 		<label class="check"><input name="is_admin" type="checkbox"> Admin</label>
 		<button type="submit">` + iconLabel("plus", "Create") + `</button>
 	</form></section></div>`)
@@ -1959,7 +2161,7 @@ func userEditPage(u *User, msg string) template.HTML {
 	b.WriteString(`<form method="post">
 		<label>Username <input value="` + html.EscapeString(u.Username) + `" disabled></label>
 		<label>Email <input name="email" type="email" value="` + html.EscapeString(u.Email) + `"></label>
-		<label>New password <input name="password" type="password" autocomplete="new-password"></label>
+		<label>New password <input name="password" type="password" autocomplete="new-password" minlength="12"></label>
 		<label class="check"><input name="is_admin" type="checkbox"`)
 	if u.IsAdmin {
 		b.WriteString(` checked`)

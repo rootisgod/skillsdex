@@ -1,0 +1,13 @@
+[Unit]
+Description=Back up the SkillsDex SQLite database
+Documentation=https://github.com/iain/skillsdex
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/skillsdex-backup
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/skillsdex
+ReadOnlyPaths=/var/lib/skillsdex

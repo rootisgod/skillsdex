@@ -66,6 +66,122 @@ func TestHTTPServerUsesBoundedTimeouts(t *testing.T) {
 	}
 }
 
+func TestSecurityHeaders(t *testing.T) {
+	proxies, err := parseTrustedProxies([]string{"127.0.0.1/32"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{trustedProxies: proxies}
+	handler := a.securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "127.0.0.1:45678"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	headers := w.Result().Header
+	for name, want := range map[string]string{
+		"X-Content-Type-Options":    "nosniff",
+		"X-Frame-Options":           "DENY",
+		"Referrer-Policy":           "no-referrer",
+		"Strict-Transport-Security": "max-age=31536000",
+	} {
+		if got := headers.Get(name); got != want {
+			t.Fatalf("%s = %q, want %q", name, got, want)
+		}
+	}
+	if got := headers.Get("Content-Security-Policy"); !strings.Contains(got, "default-src 'self'") || !strings.Contains(got, "frame-ancestors 'none'") {
+		t.Fatalf("unexpected CSP %q", got)
+	}
+
+	httpReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	httpW := httptest.NewRecorder()
+	handler.ServeHTTP(httpW, httpReq)
+	if got := httpW.Result().Header.Get("Strict-Transport-Security"); got != "" {
+		t.Fatalf("plain HTTP HSTS = %q, want empty", got)
+	}
+
+	spoofedReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	spoofedReq.RemoteAddr = "198.51.100.10:45678"
+	spoofedReq.Header.Set("X-Forwarded-Proto", "https")
+	spoofedW := httptest.NewRecorder()
+	handler.ServeHTTP(spoofedW, spoofedReq)
+	if got := spoofedW.Result().Header.Get("Strict-Transport-Security"); got != "" {
+		t.Fatalf("untrusted forwarded HTTPS HSTS = %q, want empty", got)
+	}
+}
+
+func TestSafeBootstrapRejectsPublicBindWithDefaultAdminPassword(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	if err := requireSafeBootstrap(ctx, db, "127.0.0.1:8765"); err != nil {
+		t.Fatalf("loopback bind should be allowed during first setup: %v", err)
+	}
+	if err := requireSafeBootstrap(ctx, db, "localhost:8765"); err != nil {
+		t.Fatalf("localhost bind should be allowed during first setup: %v", err)
+	}
+	if err := requireSafeBootstrap(ctx, db, "0.0.0.0:8765"); err == nil || !strings.Contains(err.Error(), "default admin/admin password") {
+		t.Fatalf("public bind err = %v, want default-password refusal", err)
+	}
+	if err := requireSafeBootstrap(ctx, db, ":8765"); err == nil || !strings.Contains(err.Error(), "default admin/admin password") {
+		t.Fatalf("wildcard bind err = %v, want default-password refusal", err)
+	}
+
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := setUserPassword(ctx, db, admin.ID, "changed-password-123"); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireSafeBootstrap(ctx, db, "0.0.0.0:8765"); err != nil {
+		t.Fatalf("public bind after password change should be allowed: %v", err)
+	}
+}
+
+func TestTrustedProxyControlsForwardedHeaders(t *testing.T) {
+	proxies, err := parseTrustedProxies([]string{"127.0.0.1,::1/128"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{trustedProxies: proxies}
+
+	trustedReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	trustedReq.RemoteAddr = "127.0.0.1:45678"
+	trustedReq.Header.Set("X-Forwarded-Proto", "https")
+	trustedReq.Header.Set("X-Forwarded-For", "203.0.113.25, 127.0.0.1")
+	if !a.isSecureRequest(trustedReq) {
+		t.Fatal("trusted proxy HTTPS request was not treated as secure")
+	}
+	if got := a.remoteAddr(trustedReq); got != "203.0.113.25" {
+		t.Fatalf("trusted proxy remote addr = %q, want client IP", got)
+	}
+	if !a.sessionCookie(trustedReq, "token", 0).Secure {
+		t.Fatal("trusted proxy HTTPS cookie should be Secure")
+	}
+
+	spoofedReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	spoofedReq.RemoteAddr = "198.51.100.10:45678"
+	spoofedReq.Header.Set("X-Forwarded-Proto", "https")
+	spoofedReq.Header.Set("X-Forwarded-For", "203.0.113.25")
+	if a.isSecureRequest(spoofedReq) {
+		t.Fatal("untrusted forwarded HTTPS request was treated as secure")
+	}
+	if got := a.remoteAddr(spoofedReq); got != "198.51.100.10" {
+		t.Fatalf("untrusted proxy remote addr = %q, want socket IP", got)
+	}
+	if a.sessionCookie(spoofedReq, "token", 0).Secure {
+		t.Fatal("untrusted forwarded HTTPS cookie should not be Secure")
+	}
+}
+
 func TestHelpPageRequiresAuthAndRendersReference(t *testing.T) {
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
 	if err != nil {
@@ -325,7 +441,7 @@ func TestAdminAuditLogRecordsActions(t *testing.T) {
 		t.Fatal("audit page leaked raw token")
 	}
 
-	if err := createUser(ctx, db, "auditor", "", "password", false); err != nil {
+	if err := createUser(ctx, db, "auditor", "", "password-1234", false); err != nil {
 		t.Fatal(err)
 	}
 	auditor, err := getUserByUsername(ctx, db, "auditor")
@@ -467,7 +583,7 @@ func TestAdminMaintenancePrunesRetentionData(t *testing.T) {
 		t.Fatalf("retention audit event count = %d, want 1", got)
 	}
 
-	if err := createUser(ctx, db, "maintainer", "", "password", false); err != nil {
+	if err := createUser(ctx, db, "maintainer", "", "password-1234", false); err != nil {
 		t.Fatal(err)
 	}
 	user, err := getUserByUsername(ctx, db, "maintainer")
@@ -587,6 +703,107 @@ func TestDefaultAdminLoginRequiresPasswordChange(t *testing.T) {
 	mux.ServeHTTP(skillsW, skillsReq)
 	if skillsW.Code != http.StatusOK {
 		t.Fatalf("/skills after password change = %d, want 200: %s", skillsW.Code, skillsW.Body.String())
+	}
+}
+
+func TestLoginRateLimitBlocksPasswordGuessing(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	a := &app{db: db}
+	mux := http.NewServeMux()
+	a.routes(mux)
+
+	for i := 0; i < loginFailureLimit; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=admin&password=wrong-password"))
+		req.RemoteAddr = "198.51.100.10:12345"
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("failed login %d = %d, want 200", i+1, w.Code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=admin&password=admin"))
+	req.RemoteAddr = "198.51.100.10:12345"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("rate-limited login = %d, want 429", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "Too many failed login attempts") {
+		t.Fatalf("rate-limit page missing message:\n%s", w.Body.String())
+	}
+}
+
+func TestAdminUserManagementHardening(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminSession, err := createWebSession(ctx, db, admin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a := &app{db: db}
+	mux := http.NewServeMux()
+	a.routes(mux)
+
+	lastAdminReq := httptest.NewRequest(http.MethodPost, "/admin/users/"+admin.ID, strings.NewReader(csrfForm(t, db, adminSession, "")))
+	lastAdminReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	lastAdminReq.AddCookie(&http.Cookie{Name: "skillsdex_session", Value: adminSession})
+	lastAdminW := httptest.NewRecorder()
+	mux.ServeHTTP(lastAdminW, lastAdminReq)
+	if lastAdminW.Code != http.StatusOK {
+		t.Fatalf("last admin update = %d, want 200: %s", lastAdminW.Code, lastAdminW.Body.String())
+	}
+	if !strings.Contains(lastAdminW.Body.String(), "cannot remove or deactivate the last active admin") {
+		t.Fatalf("last admin page missing error:\n%s", lastAdminW.Body.String())
+	}
+
+	if err := createUser(ctx, db, "alice", "", "alice-password-123", false); err != nil {
+		t.Fatal(err)
+	}
+	alice, err := getUserByUsername(ctx, db, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliceSession, err := createWebSession(ctx, db, alice.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliceToken, err := createAPIToken(ctx, db, alice.ID, "web-admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := csrfForm(t, db, adminSession, "deactivated=on")
+	deactivateReq := httptest.NewRequest(http.MethodPost, "/admin/users/"+alice.ID, strings.NewReader(body))
+	deactivateReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	deactivateReq.AddCookie(&http.Cookie{Name: "skillsdex_session", Value: adminSession})
+	deactivateW := httptest.NewRecorder()
+	mux.ServeHTTP(deactivateW, deactivateReq)
+	if deactivateW.Code != http.StatusFound || deactivateW.Header().Get("Location") != "/admin/users" {
+		t.Fatalf("deactivate user = %d location %q body %s", deactivateW.Code, deactivateW.Header().Get("Location"), deactivateW.Body.String())
+	}
+	if _, err := userForSession(ctx, db, aliceSession); err == nil {
+		t.Fatal("deactivated user's web session remained usable")
+	}
+	if _, err := userForAPIToken(ctx, db, aliceToken); err == nil {
+		t.Fatal("deactivated user's API token remained usable")
 	}
 }
 
@@ -1001,7 +1218,7 @@ func TestSkillExportDumpsOwnedSkills(t *testing.T) {
 	if err := archiveSkill(ctx, db, admin.ID, "admin", "exported-skill"); err != nil {
 		t.Fatal(err)
 	}
-	if err := createUser(ctx, db, "alice", "", "secret", false); err != nil {
+	if err := createUser(ctx, db, "alice", "", "secret-123456", false); err != nil {
 		t.Fatal(err)
 	}
 	alice, err := getUserByUsername(ctx, db, "alice")
@@ -1107,7 +1324,7 @@ func TestSkillGitHubExportUsesRepoShape(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := createUser(ctx, db, "alice", "", "secret", false); err != nil {
+	if err := createUser(ctx, db, "alice", "", "secret-123456", false); err != nil {
 		t.Fatal(err)
 	}
 	alice, err := getUserByUsername(ctx, db, "alice")
@@ -1214,7 +1431,7 @@ func TestAPIBackupExportAndRestore(t *testing.T) {
 		t.Fatalf("backup export content type = %q", exportW.Header().Get("Content-Type"))
 	}
 
-	if err := createUser(ctx, db, "restore-cli", "", "password", false); err != nil {
+	if err := createUser(ctx, db, "restore-cli", "", "password-1234", false); err != nil {
 		t.Fatal(err)
 	}
 	restoreUser, err := getUserByUsername(ctx, db, "restore-cli")
@@ -1377,7 +1594,7 @@ func TestSkillImportRestoresSkillsDexExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := createUser(ctx, db, "restore", "", "password", false); err != nil {
+	if err := createUser(ctx, db, "restore", "", "password-1234", false); err != nil {
 		t.Fatal(err)
 	}
 	restoreUser, err := getUserByUsername(ctx, db, "restore")

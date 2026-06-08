@@ -275,24 +275,29 @@ Or choose a custom install path:
 PREFIX="$HOME/.local" scripts/install.sh ./skillsdex
 ```
 
-Run with Docker:
-
-```bash
-docker compose up --build
-```
-
-The container runs as a non-root user, stores the SQLite database under the `skillsdex-data` volume, and publishes `http://127.0.0.1:8765` by default. The first login is still `admin/admin` and is forced through the password-change setup page.
+Docker files are retained for image build checks and future packaging work, but Docker is not the recommended local or internet-facing run path. Use the local binary for development and the systemd service plus an external Caddy reverse proxy for production.
 
 Run under systemd on a Linux host:
 
 ```bash
+id -u skillsdex >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/skillsdex --shell /usr/sbin/nologin skillsdex
 sudo install -m 0755 skillsdex /usr/local/bin/skillsdex
 sudo install -m 0644 deploy/skillsdex.service /etc/systemd/system/skillsdex.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now skillsdex
 ```
 
-The unit binds to `127.0.0.1:8765`, stores data in `/var/lib/skillsdex`, and is intended to sit behind a local browser session or a TLS-terminating reverse proxy.
+The unit binds to `127.0.0.1:8765`, stores data in `/var/lib/skillsdex`, and trusts only loopback proxy headers so Caddy can pass the real client IP and HTTPS state.
+
+For internet-facing production, use the production plan in [PRODUCTION.md](PRODUCTION.md). The recommended default is Caddy in front of the systemd service:
+
+```text
+internet -> Caddy :443/:80 -> skillsdex 127.0.0.1:8765
+```
+
+Start from `deploy/Caddyfile`, replace the hostname, point DNS at the host, and expose only ports 80 and 443 publicly.
+
+Do not expose a fresh instance on a public bind while the default `admin/admin` password is active. `skillsdex serve` allows local loopback setup, but refuses public bind addresses until the admin password has been changed.
 
 If the only admin password is lost, stop the service and reset it with local database access:
 
@@ -411,11 +416,11 @@ Current context:
 - SkillsDex stores full skill packages, including `SKILL.md` plus supporting files, and the web editor, API, CLI install/sync/uninstall path, web previews/diffs, backup restore, GitHub import, and GitHub export preserve those package files.
 - SkillsDex export zips can be restored from the Import page or CLI with path validation and archived-skill preservation.
 - One-way GitHub export is available from the web app and CLI as a repo-shaped `skills/<owner>/<slug>/` tree.
-- The seeded `admin/admin` login is forced through a password-change setup screen before normal web routes are available.
-- API tokens are stored as hashes and shown only once. Authenticated web forms use per-session CSRF tokens, including backup uploads, and session cookies are marked `Secure` when served over HTTPS.
+- The seeded `admin/admin` login is forced through a password-change setup screen before normal web routes are available, and public binds are refused while that default password remains active.
+- API tokens and web session tokens are stored as hashes. API tokens are shown only once. Authenticated web forms use per-session CSRF tokens, including backup uploads, and session cookies are marked `Secure` when served over HTTPS directly or through a configured trusted proxy.
 - Admins can review `Admin > Audit` for recent login, password, token, skill, import/export, backup export/restore, install-set, retention, and local recovery changes.
 - Admins can prune expired sessions, revoked API token metadata, and old audit events from `Admin > Maintenance`.
-- Docker, systemd, install-script, checksummed release archives, optional minisign signatures, generated Homebrew formula packaging, and legacy database migration smoke coverage are available for more repeatable local or small-host deployments.
+- systemd, install-script, Docker image build files, checksummed release archives, optional minisign signatures, generated Homebrew formula packaging, and legacy database migration smoke coverage are available for more repeatable local or small-host deployments.
 - The CLI install/sync loop remains the core product path and should stay the main polish target.
 
 Remaining high-level work:

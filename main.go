@@ -17,10 +17,12 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		fs := flag.NewFlagSet("serve", flag.ExitOnError)
-		addr := fs.String("addr", "0.0.0.0:8765", "listen address")
+		addr := fs.String("addr", "127.0.0.1:8765", "listen address")
 		dbPath := fs.String("db", "", "SQLite database path")
+		var trustedProxies stringListFlag
+		fs.Var(&trustedProxies, "trusted-proxy", "trusted reverse proxy IP or CIDR for X-Forwarded-* headers; repeat or comma-separate")
 		_ = fs.Parse(os.Args[2:])
-		if err := runServe(*addr, *dbPath); err != nil {
+		if err := runServe(*addr, *dbPath, trustedProxies); err != nil {
 			fmt.Fprintf(os.Stderr, "serve: %v\n", err)
 			os.Exit(1)
 		}
@@ -172,11 +174,22 @@ func main() {
 	}
 }
 
+type stringListFlag []string
+
+func (f *stringListFlag) String() string {
+	return fmt.Sprint([]string(*f))
+}
+
+func (f *stringListFlag) Set(value string) error {
+	*f = append(*f, value)
+	return nil
+}
+
 func usage() {
 	fmt.Fprintf(os.Stderr, `skillsdex %s
 
 Usage:
-  skillsdex serve
+  skillsdex serve [--addr ADDR] [--db PATH] [--trusted-proxy IP_OR_CIDR]
   skillsdex login [--server URL] [--token TOKEN|--token-stdin]
   skillsdex logout
   skillsdex whoami

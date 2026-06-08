@@ -46,7 +46,7 @@ func TestDefaultAdminAndTenantScopedSkills(t *testing.T) {
 			t.Fatalf("default skill %s/%s is not marked recommended", s.OwnerSlug, s.Slug)
 		}
 	}
-	if err := createUser(ctx, db, "alice", "", "secret", false); err != nil {
+	if err := createUser(ctx, db, "alice", "", "secret-123456", false); err != nil {
 		t.Fatal(err)
 	}
 	alice, err := getUserByUsername(ctx, db, "alice")
@@ -100,7 +100,7 @@ func TestInstallSetsAreScopedAndValidateMembership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := createUser(ctx, db, "alice", "", "secret", false); err != nil {
+	if err := createUser(ctx, db, "alice", "", "secret-123456", false); err != nil {
 		t.Fatal(err)
 	}
 	alice, err := getUserByUsername(ctx, db, "alice")
@@ -149,6 +149,116 @@ func TestInstallSetsAreScopedAndValidateMembership(t *testing.T) {
 	}
 	if _, _, err := listInstallSetSkills(ctx, db, alice.ID, "daily"); !isNotFound(err) {
 		t.Fatalf("alice should not read admin set, err=%v", err)
+	}
+}
+
+func TestUserAccountHardening(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := createUser(ctx, db, "shortpass", "", "short", false); err == nil || !strings.Contains(err.Error(), "password must be at least 12 characters") {
+		t.Fatalf("short create password err = %v, want length error", err)
+	}
+	if err := updateUser(ctx, db, admin.ID, "", "", false, false); err == nil || !strings.Contains(err.Error(), "last active admin") {
+		t.Fatalf("last admin demotion err = %v, want last admin error", err)
+	}
+	if err := updateUser(ctx, db, admin.ID, "", "", true, true); err == nil || !strings.Contains(err.Error(), "last active admin") {
+		t.Fatalf("last admin deactivation err = %v, want last admin error", err)
+	}
+
+	if err := createUser(ctx, db, "alice", "", "alice-password-123", false); err != nil {
+		t.Fatal(err)
+	}
+	alice, err := getUserByUsername(ctx, db, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := createWebSession(ctx, db, alice.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := createAPIToken(ctx, db, alice.ID, "hardening")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := updateUser(ctx, db, alice.ID, "", "", false, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := userForSession(ctx, db, session); err == nil {
+		t.Fatal("deactivated user's web session remained usable")
+	}
+	if _, err := userForAPIToken(ctx, db, token); err == nil {
+		t.Fatal("deactivated user's API token remained usable")
+	}
+
+	if err := createUser(ctx, db, "bob", "", "bob-password-123", false); err != nil {
+		t.Fatal(err)
+	}
+	bob, err := getUserByUsername(ctx, db, "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobSession, err := createWebSession(ctx, db, bob.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobToken, err := createAPIToken(ctx, db, bob.ID, "reset")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := updateUser(ctx, db, bob.ID, "", "new-bob-password-123", false, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := userForSession(ctx, db, bobSession); err == nil {
+		t.Fatal("password reset user's web session remained usable")
+	}
+	if _, err := userForAPIToken(ctx, db, bobToken); err == nil {
+		t.Fatal("password reset user's API token remained usable")
+	}
+}
+
+func TestWebSessionTokensAreStoredHashed(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := createWebSession(ctx, db, admin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored, csrf string
+	if err := db.QueryRowContext(ctx, `SELECT token, csrf_token FROM web_sessions WHERE user_id = ?`, admin.ID).Scan(&stored, &csrf); err != nil {
+		t.Fatal(err)
+	}
+	if stored == session || stored != sessionTokenHash(session) {
+		t.Fatalf("stored web session token = %q, want hash %q and not raw token", stored, sessionTokenHash(session))
+	}
+	if csrf == "" || csrf == session || csrf == stored {
+		t.Fatalf("csrf token should be separate from raw and stored session tokens, got %q", csrf)
+	}
+	if _, err := userForSession(ctx, db, session); err != nil {
+		t.Fatalf("hashed session did not authenticate: %v", err)
+	}
+	if err := deleteWebSession(ctx, db, session); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := userForSession(ctx, db, session); err == nil {
+		t.Fatal("deleted hashed session remained usable")
 	}
 }
 
@@ -544,12 +654,19 @@ func TestMigrateLegacyDatabaseShape(t *testing.T) {
 	if _, err := userForSession(ctx, db, legacySession); err != nil {
 		t.Fatalf("legacy session should remain valid after migration: %v", err)
 	}
+	var storedSession, storedCSRF string
+	if err := db.QueryRow(`SELECT token, csrf_token FROM web_sessions WHERE user_id = ?`, userID).Scan(&storedSession, &storedCSRF); err != nil {
+		t.Fatal(err)
+	}
+	if storedSession == legacySession || storedSession != sessionTokenHash(legacySession) {
+		t.Fatalf("legacy session was not migrated securely: stored=%q hash=%q", storedSession, sessionTokenHash(legacySession))
+	}
 	csrf, err := csrfTokenForSession(ctx, db, legacySession)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if csrf != legacySession {
-		t.Fatalf("legacy session csrf token = %q, want session token fallback", csrf)
+	if csrf == "" || csrf == legacySession || csrf != storedCSRF {
+		t.Fatalf("legacy session csrf token = %q stored=%q, want fresh separate token", csrf, storedCSRF)
 	}
 	skill, err := getSkill(ctx, db, admin.ID, "admin", "legacy-skill")
 	if err != nil {

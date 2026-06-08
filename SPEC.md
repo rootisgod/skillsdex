@@ -268,10 +268,10 @@ Run the web app and API locally.
 Default bind address:
 
 ```text
-0.0.0.0:8765
+127.0.0.1:8765
 ```
 
-This intentionally binds to all interfaces by default for remote testing. Do not add a forced password change or startup warning for the default admin credentials in phase 1.
+This intentionally binds to localhost by default. Public bind addresses must not be allowed while the default admin password is still active.
 
 On startup, `skillsdex serve` should:
 
@@ -279,6 +279,7 @@ On startup, `skillsdex serve` should:
 - run migrations automatically
 - create the default first user if no users exist
 - print the local web URL
+- refuse public bind addresses while the default admin password is active
 
 Default first user:
 
@@ -852,7 +853,7 @@ The CLI and web app are both part of phase 1: the CLI proves install/sync, and t
 
 The first useful release is complete when:
 
-1. `skillsdex serve` starts the web app/API on `0.0.0.0:8765`.
+1. `skillsdex serve` starts the web app/API on `127.0.0.1:8765`.
 2. First startup creates/migrates the SQLite database.
 3. First startup creates `admin` / `admin` if no users exist.
 4. A user can log into the web app.
@@ -884,7 +885,7 @@ The first useful release is complete when:
 - Product name and binary: `skillsdex`.
 - One Go binary with subcommands.
 - `skillsdex serve` runs the web app and API.
-- Default server bind address: `0.0.0.0:8765`.
+- Default server bind address: `127.0.0.1:8765`.
 - Local binary execution is the phase 1 deployment target.
 - Docker should be easy later, but is not part of phase 1.
 - Web app uses email/password login and session cookies.

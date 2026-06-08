@@ -1,0 +1,7 @@
+# Replace skills.example.com with the production hostname.
+#
+# Caddy will request and renew public TLS certificates automatically when DNS
+# points to this host and ports 80/443 are reachable from the internet.
+skills.example.com {
+	reverse_proxy 127.0.0.1:8765
+}
