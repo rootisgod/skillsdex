@@ -32,6 +32,8 @@ type app struct {
 	httpClient httpDoer
 }
 
+var defaultSourceHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
 type ctxKey string
 
 const userKey ctxKey = "user"
@@ -59,7 +61,15 @@ func runServe(addr, dbPath string) error {
 	localURL := "http://127.0.0.1" + addr[strings.LastIndex(addr, ":"):]
 	log.Printf("skillsdex web/API listening on http://%s", addr)
 	log.Printf("open %s", localURL)
-	return http.ListenAndServe(addr, mux)
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	return server.ListenAndServe()
 }
 
 func (a *app) routes(mux *http.ServeMux) {
@@ -87,7 +97,7 @@ func (a *app) sourceHTTPClient() httpDoer {
 	if a.httpClient != nil {
 		return a.httpClient
 	}
-	return http.DefaultClient
+	return defaultSourceHTTPClient
 }
 
 func (a *app) handleCSS(w http.ResponseWriter, r *http.Request) {
@@ -131,18 +141,6 @@ func (a *app) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	})
-}
-
-func (a *app) currentUser(r *http.Request) *User {
-	c, err := r.Cookie("skillsdex_session")
-	if err != nil || c.Value == "" {
-		return nil
-	}
-	u, err := userForSession(r.Context(), a.db, c.Value)
-	if err != nil {
-		return nil
-	}
-	return u
 }
 
 func (a *app) validCSRF(r *http.Request, sessionToken string) bool {

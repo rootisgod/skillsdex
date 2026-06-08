@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -28,6 +29,8 @@ type apiClient struct {
 	token string
 	http  *http.Client
 }
+
+const cliRequestTimeout = 30 * time.Second
 
 type skillResponse struct {
 	Skill Skill       `json:"skill"`
@@ -3330,7 +3333,22 @@ func authenticatedClient() (*apiClient, error) {
 }
 
 func newAPIClient(cfg AuthConfig) *apiClient {
-	return &apiClient{base: strings.TrimRight(cfg.ServerURL, "/"), token: cfg.Token, http: http.DefaultClient}
+	return &apiClient{
+		base:  strings.TrimRight(cfg.ServerURL, "/"),
+		token: cfg.Token,
+		http:  &http.Client{Timeout: cliRequestTimeout},
+	}
+}
+
+func (c *apiClient) newRequest(method, path string, body io.Reader) (*http.Request, context.CancelFunc, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), cliRequestTimeout)
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
+	if err != nil {
+		cancel()
+		return nil, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	return req, cancel, nil
 }
 
 func (c *apiClient) fetchSkill(owner, slug string) (skillResponse, error) {
@@ -3365,11 +3383,11 @@ func (c *apiClient) updateSkillFlags(owner, slug string, flags SkillFlagUpdate) 
 
 func (c *apiClient) skillExists(owner, slug string) (bool, error) {
 	path := "/v1/skills/" + url.PathEscape(owner) + "/" + url.PathEscape(slug)
-	req, err := http.NewRequest(http.MethodGet, c.base+path, nil)
+	req, cancel, err := c.newRequest(http.MethodGet, path, nil)
 	if err != nil {
 		return false, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	defer cancel()
 	res, err := c.http.Do(req)
 	if err != nil {
 		return false, err
@@ -3385,11 +3403,11 @@ func (c *apiClient) skillExists(owner, slug string) (bool, error) {
 }
 
 func (c *apiClient) getJSON(path string, out any) error {
-	req, err := http.NewRequest(http.MethodGet, c.base+path, nil)
+	req, cancel, err := c.newRequest(http.MethodGet, path, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	defer cancel()
 	res, err := c.http.Do(req)
 	if err != nil {
 		return err
@@ -3402,11 +3420,11 @@ func (c *apiClient) getJSON(path string, out any) error {
 }
 
 func (c *apiClient) getBytes(path string) ([]byte, error) {
-	req, err := http.NewRequest(http.MethodGet, c.base+path, nil)
+	req, cancel, err := c.newRequest(http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	defer cancel()
 	res, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
@@ -3427,11 +3445,11 @@ func (c *apiClient) getBytes(path string) ([]byte, error) {
 
 func (c *apiClient) putJSON(path string, in, out any) error {
 	body, _ := json.Marshal(in)
-	req, err := http.NewRequest(http.MethodPut, c.base+path, bytes.NewReader(body))
+	req, cancel, err := c.newRequest(http.MethodPut, path, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	defer cancel()
 	req.Header.Set("Content-Type", "application/json")
 	res, err := c.http.Do(req)
 	if err != nil {
@@ -3449,11 +3467,11 @@ func (c *apiClient) putJSON(path string, in, out any) error {
 
 func (c *apiClient) postJSON(path string, in, out any) error {
 	body, _ := json.Marshal(in)
-	req, err := http.NewRequest(http.MethodPost, c.base+path, bytes.NewReader(body))
+	req, cancel, err := c.newRequest(http.MethodPost, path, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	defer cancel()
 	req.Header.Set("Content-Type", "application/json")
 	res, err := c.http.Do(req)
 	if err != nil {
@@ -3470,11 +3488,11 @@ func (c *apiClient) postJSON(path string, in, out any) error {
 }
 
 func (c *apiClient) postBytes(path string, data []byte, contentType string, out any) error {
-	req, err := http.NewRequest(http.MethodPost, c.base+path, bytes.NewReader(data))
+	req, cancel, err := c.newRequest(http.MethodPost, path, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	defer cancel()
 	req.Header.Set("Content-Type", contentType)
 	res, err := c.http.Do(req)
 	if err != nil {
@@ -3514,30 +3532,6 @@ func apiErrorMessage(body []byte) string {
 		return ""
 	}
 	return strings.TrimSpace(payload.Error)
-}
-
-func confirmOverwriteIfNeeded(path string, managed *Install, next []byte, confirm confirmOptions) error {
-	_, statErr := os.Stat(path)
-	if errors.Is(statErr, os.ErrNotExist) {
-		return nil
-	}
-	if statErr != nil {
-		return statErr
-	}
-	current, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	if managed == nil {
-		showOverwriteDiff(path, current, next)
-		return requireConfirmation(fmt.Sprintf("%s exists but is not managed by SkillsDex. Overwrite?", path), confirm)
-	}
-	hash := sha256String(current)
-	if hash != managed.InstalledHash {
-		showOverwriteDiff(path, current, next)
-		return requireConfirmation(fmt.Sprintf("%s was edited locally. Overwrite?", path), confirm)
-	}
-	return nil
 }
 
 func packageFileDestination(skillPath, filePath string) string {
@@ -3699,14 +3693,6 @@ func showOverwriteDiff(path string, current, next []byte) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "\nDiff for %s:\n%s\n\n", path, diff)
-}
-
-func mustReadFile(path string) []byte {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	return b
 }
 
 func extractZipToDir(zr *zip.Reader, dir string, confirm confirmOptions) (int, error) {
@@ -4065,29 +4051,6 @@ func parseInstalledArgs(args []string) (installedOptions, error) {
 		}
 	}
 	return opts, nil
-}
-
-func parseSingleArg(args []string) (string, error) {
-	if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
-		return "", errors.New("expected one argument")
-	}
-	if strings.HasPrefix(args[0], "-") {
-		return "", fmt.Errorf("unknown flag %s", args[0])
-	}
-	return strings.TrimSpace(args[0]), nil
-}
-
-func parseOptionalSingleArg(args []string) (string, error) {
-	if len(args) == 0 {
-		return "", nil
-	}
-	if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
-		return "", errors.New("expected zero or one argument")
-	}
-	if strings.HasPrefix(args[0], "-") {
-		return "", fmt.Errorf("unknown flag %s", args[0])
-	}
-	return strings.TrimSpace(args[0]), nil
 }
 
 func parseSkillsArgs(args []string) (bool, error) {

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"html"
-	"net/http"
 	"path"
 	"regexp"
 	"strconv"
@@ -196,8 +195,4 @@ func inlineMarkdown(s string) string {
 	escaped := html.EscapeString(s)
 	code := regexp.MustCompile("`([^`]+)`")
 	return code.ReplaceAllString(escaped, "<code>$1</code>")
-}
-
-func wantsHTML(r *http.Request) bool {
-	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }

@@ -1363,19 +1363,6 @@ func listRevisions(ctx context.Context, db *sql.DB, userID, owner, slug string) 
 	return revs, rows.Err()
 }
 
-func getRevisionContent(ctx context.Context, db *sql.DB, userID, owner, slug, revID string) ([]byte, SkillRevision, *Skill, error) {
-	files, r, s, err := getRevisionFiles(ctx, db, userID, owner, slug, revID)
-	if err != nil {
-		return nil, SkillRevision{}, nil, err
-	}
-	for _, file := range files {
-		if file.Path == "SKILL.md" {
-			return []byte(file.Content), r, s, nil
-		}
-	}
-	return nil, SkillRevision{}, nil, sql.ErrNoRows
-}
-
 func getRevisionFiles(ctx context.Context, db *sql.DB, userID, owner, slug, revID string) ([]SkillFile, SkillRevision, *Skill, error) {
 	s, err := getSkill(ctx, db, userID, owner, slug)
 	if err != nil {
@@ -1391,19 +1378,6 @@ func getRevisionFiles(ctx context.Context, db *sql.DB, userID, owner, slug, revI
 	r.CreatedAt = parseTime(created)
 	files, err := filesForRevision(ctx, db, r.ID)
 	return files, r, s, err
-}
-
-func previousRevisionContent(ctx context.Context, db *sql.DB, rev SkillRevision) ([]byte, error) {
-	files, err := previousRevisionFiles(ctx, db, rev)
-	if err != nil {
-		return nil, err
-	}
-	for _, file := range files {
-		if file.Path == "SKILL.md" {
-			return []byte(file.Content), nil
-		}
-	}
-	return nil, nil
 }
 
 func previousRevisionFiles(ctx context.Context, db *sql.DB, rev SkillRevision) ([]SkillFile, error) {
