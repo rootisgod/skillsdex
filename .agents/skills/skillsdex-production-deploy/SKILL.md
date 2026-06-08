@@ -126,6 +126,7 @@ skillsdex backup restore --file ./skillsdex-backup.zip --dry-run
 Install the backup timer:
 
 ```bash
+ssh <host> 'sudo install -d -m 0700 /var/backups/skillsdex'
 ssh <host> 'sudo install -m 0755 deploy/skillsdex-backup.sh /usr/local/bin/skillsdex-backup'
 ssh <host> 'sudo install -m 0644 deploy/skillsdex-backup.service /etc/systemd/system/skillsdex-backup.service'
 ssh <host> 'sudo install -m 0644 deploy/skillsdex-backup.timer /etc/systemd/system/skillsdex-backup.timer'

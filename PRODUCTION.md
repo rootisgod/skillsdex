@@ -271,6 +271,7 @@ sudo sqlite3 /var/lib/skillsdex/skillsdex.db \
 An optional systemd timer example is included:
 
 ```bash
+sudo install -d -m 0700 /var/backups/skillsdex
 sudo install -m 0755 deploy/skillsdex-backup.sh /usr/local/bin/skillsdex-backup
 sudo install -m 0644 deploy/skillsdex-backup.service /etc/systemd/system/skillsdex-backup.service
 sudo install -m 0644 deploy/skillsdex-backup.timer /etc/systemd/system/skillsdex-backup.timer
