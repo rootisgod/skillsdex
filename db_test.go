@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -855,5 +856,85 @@ func TestSkillRevisionStoresSupportingFiles(t *testing.T) {
 	}
 	if !strings.Contains(manifestRaw, "references/guide.md") || !strings.Contains(manifestRaw, "scripts/run.sh") {
 		t.Fatalf("manifest did not include supporting files: %s", manifestRaw)
+	}
+}
+
+func TestSkillRevisionRejectsNonTextSupportingFiles(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = createSkill(ctx, db, admin, SkillInput{
+		Owner:       "admin",
+		Slug:        "binary-file",
+		Name:        "Binary File",
+		Description: "Use when testing file validation.",
+		Body:        "# Binary File",
+		Files:       []SkillFile{{Path: "assets/pixel.bin", Content: "\x00\x01"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "supported text file type") {
+		t.Fatalf("binary supporting file err = %v, want text file type error", err)
+	}
+	_, err = createSkill(ctx, db, admin, SkillInput{
+		Owner:       "admin",
+		Slug:        "invalid-utf8",
+		Name:        "Invalid UTF8",
+		Description: "Use when testing UTF-8 validation.",
+		Body:        "# Invalid UTF8",
+		Files:       []SkillFile{{Path: "references/bad.txt", Content: string([]byte{0xff, 0xfe})}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "UTF-8 text") {
+		t.Fatalf("invalid UTF-8 supporting file err = %v, want UTF-8 error", err)
+	}
+}
+
+func TestSkillRevisionQuota(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := createSkill(ctx, db, admin, SkillInput{
+		Owner:       "admin",
+		Slug:        "revision-quota",
+		Name:        "Revision Quota",
+		Description: "Use when testing revision quota.",
+		Body:        "# Revision Quota",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 2; i <= maxSkillRevisions; i++ {
+		if _, err := updateSkill(ctx, db, admin, "admin", "revision-quota", SkillInput{
+			Owner:       "admin",
+			Slug:        "revision-quota",
+			Name:        "Revision Quota",
+			Description: "Use when testing revision quota.",
+			Body:        fmt.Sprintf("# Revision Quota\n\nRevision %d.", i),
+		}); err != nil {
+			t.Fatalf("revision %d update failed: %v", i, err)
+		}
+	}
+	_, err = updateSkill(ctx, db, admin, "admin", "revision-quota", SkillInput{
+		Owner:       "admin",
+		Slug:        "revision-quota",
+		Name:        "Revision Quota",
+		Description: "Use when testing revision quota.",
+		Body:        "# Revision Quota\n\nOne too many.",
+	})
+	if err == nil || !strings.Contains(err.Error(), "revision quota exceeded") {
+		t.Fatalf("revision quota err = %v, want quota error", err)
 	}
 }

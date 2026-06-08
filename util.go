@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 var slugRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
@@ -130,6 +131,28 @@ func validateSkillFilePath(value string) error {
 		return fmt.Errorf("file path %q is not allowed", value)
 	}
 	return nil
+}
+
+func validateTextSkillFile(filePath, content string) error {
+	if !isAllowedTextSkillFilePath(filePath) {
+		return fmt.Errorf("%s must be a supported text file type", filePath)
+	}
+	if !utf8.ValidString(content) || strings.ContainsRune(content, '\x00') {
+		return fmt.Errorf("%s must contain UTF-8 text", filePath)
+	}
+	return nil
+}
+
+func isAllowedTextSkillFilePath(filePath string) bool {
+	if filePath == "SKILL.md" {
+		return true
+	}
+	switch strings.ToLower(path.Ext(filePath)) {
+	case ".md", ".markdown", ".txt", ".json", ".yaml", ".yml", ".toml", ".sh", ".py", ".js", ".ts", ".css", ".html":
+		return true
+	default:
+		return false
+	}
 }
 
 func renderSkillMarkdown(in SkillInput) string {

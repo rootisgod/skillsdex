@@ -318,7 +318,7 @@ skillsdex admin reset-password --db /var/lib/skillsdex/skillsdex.db --username a
 
 The reset requires an admin user, enforces the normal password length rule, revokes existing web sessions and API tokens for that user, and records an audit event.
 
-Admins can also open `Admin > Maintenance` to prune expired web sessions, revoked API token metadata, and old audit events. Retention pruning never deletes skills, revisions, users, install sets, or backups, and each prune records an aggregate audit event.
+Admins can also open `Admin > Maintenance` to review database/storage size, see the largest users and skills by stored revision bytes, prune expired web sessions, revoked API token metadata, old audit events, and old skill revisions. Revision pruning keeps the newest configured revisions per skill. User deletion is separate and destructive: it removes the account, owned skills, revisions, sessions, tokens, tags, and install sets.
 
 Build release archives:
 
@@ -425,12 +425,13 @@ Current context:
 - Setup guidance, `skillsdex setup`, named install sets, CLI public search/import/new/publish/mark, CLI dry-runs, overwrite flags, source refresh, `doctor` health checks, and quality signals are available.
 - Quality signals are available in the web app and from `skillsdex lint`, including `--strict` and `--json` for scripts.
 - SkillsDex stores full skill packages, including `SKILL.md` plus supporting files, and the web editor, API, CLI install/sync/uninstall path, web previews/diffs, backup restore, GitHub import, and GitHub export preserve those package files.
+- Skill package writes are bounded: 16 MiB per request/package, 1 MiB per file, supported UTF-8 text file types only, 1,000 skills per user, 100 revisions per skill, 256 MiB stored skill bytes per user, and a 1 GiB SQLite database guardrail.
 - SkillsDex export zips can be restored from the Import page or CLI with path validation and archived-skill preservation.
 - One-way GitHub export is available from the web app and CLI as a repo-shaped `skills/<owner>/<slug>/` tree.
 - The seeded `admin/admin` login is forced through a password-change setup screen before normal web routes are available, and public binds are refused while that default password remains active.
 - API tokens and web session tokens are stored as hashes. API tokens are shown only once. Authenticated web forms use per-session CSRF tokens, including backup uploads, and session cookies are marked `Secure` when served over HTTPS directly or through a configured trusted proxy.
 - Admins can review `Admin > Audit` for recent login, password, token, skill, import/export, backup export/restore, install-set, retention, and local recovery changes.
-- Admins can prune expired sessions, revoked API token metadata, and old audit events from `Admin > Maintenance`.
+- Admins can prune expired sessions, revoked API token metadata, old audit events, and old revisions from `Admin > Maintenance`.
 - systemd, install-script, Docker image build files, checksummed release archives, optional minisign signatures, generated Homebrew formula packaging, and legacy database migration smoke coverage are available for more repeatable local or small-host deployments.
 - The CLI install/sync loop remains the core product path and should stay the main polish target.
 

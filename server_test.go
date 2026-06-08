@@ -546,7 +546,7 @@ func TestAdminMaintenancePrunesRetentionData(t *testing.T) {
 	if postW.Code != http.StatusOK {
 		t.Fatalf("maintenance prune = %d: %s", postW.Code, postW.Body.String())
 	}
-	if !strings.Contains(postW.Body.String(), "Pruned 1 expired session(s), 1 revoked API token(s), and 1 audit event(s).") {
+	if !strings.Contains(postW.Body.String(), "Pruned 1 expired session(s), 1 revoked API token(s), 1 audit event(s), 0 old revision(s), and 0 revision file(s).") {
 		t.Fatalf("maintenance prune summary missing:\n%s", postW.Body.String())
 	}
 
@@ -804,6 +804,79 @@ func TestAdminUserManagementHardening(t *testing.T) {
 	}
 	if _, err := userForAPIToken(ctx, db, aliceToken); err == nil {
 		t.Fatal("deactivated user's API token remained usable")
+	}
+
+	createBody := csrfForm(t, db, adminSession, "username=deleteme&password=deleteme-password-123")
+	createReq := httptest.NewRequest(http.MethodPost, "/admin/users", strings.NewReader(createBody))
+	createReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	createReq.AddCookie(&http.Cookie{Name: "skillsdex_session", Value: adminSession})
+	createW := httptest.NewRecorder()
+	mux.ServeHTTP(createW, createReq)
+	if createW.Code != http.StatusFound || createW.Header().Get("Location") != "/admin/users" {
+		t.Fatalf("create delete-test user = %d location %q body %s", createW.Code, createW.Header().Get("Location"), createW.Body.String())
+	}
+	deleteUserTarget, err := getUserByUsername(ctx, db, "deleteme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loginReq := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=deleteme&password=deleteme-password-123"))
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loginW := httptest.NewRecorder()
+	mux.ServeHTTP(loginW, loginReq)
+	if loginW.Code != http.StatusFound || loginW.Header().Get("Location") != "/skills" {
+		t.Fatalf("delete-test login = %d location %q body %s", loginW.Code, loginW.Header().Get("Location"), loginW.Body.String())
+	}
+	var deleteUserSession string
+	for _, cookie := range loginW.Result().Cookies() {
+		if cookie.Name == "skillsdex_session" {
+			deleteUserSession = cookie.Value
+		}
+	}
+	if deleteUserSession == "" {
+		t.Fatal("delete-test login did not set session cookie")
+	}
+	deleteUserToken, err := createAPIToken(ctx, db, deleteUserTarget.ID, "delete-flow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	skillBody := url.Values{
+		"owner":       {"deleteme"},
+		"slug":        {"temporary"},
+		"name":        {"Temporary"},
+		"description": {"Use when testing user deletion."},
+		"body":        {"# Temporary\n\nDelete this with the user."},
+	}.Encode()
+	skillReq := httptest.NewRequest(http.MethodPost, "/skills/new", strings.NewReader(csrfForm(t, db, deleteUserSession, skillBody)))
+	skillReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	skillReq.AddCookie(&http.Cookie{Name: "skillsdex_session", Value: deleteUserSession})
+	skillW := httptest.NewRecorder()
+	mux.ServeHTTP(skillW, skillReq)
+	if skillW.Code != http.StatusFound || skillW.Header().Get("Location") != "/skills/deleteme/temporary" {
+		t.Fatalf("delete-test skill create = %d location %q body %s", skillW.Code, skillW.Header().Get("Location"), skillW.Body.String())
+	}
+	deleteReq := httptest.NewRequest(http.MethodPost, "/admin/users/"+deleteUserTarget.ID+"/delete", strings.NewReader(csrfForm(t, db, adminSession, "")))
+	deleteReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	deleteReq.AddCookie(&http.Cookie{Name: "skillsdex_session", Value: adminSession})
+	deleteW := httptest.NewRecorder()
+	mux.ServeHTTP(deleteW, deleteReq)
+	if deleteW.Code != http.StatusFound || deleteW.Header().Get("Location") != "/admin/users" {
+		t.Fatalf("delete user = %d location %q body %s", deleteW.Code, deleteW.Header().Get("Location"), deleteW.Body.String())
+	}
+	if _, err := getUserByUsername(ctx, db, "deleteme"); !isNotFound(err) {
+		t.Fatalf("deleted user lookup err = %v, want not found", err)
+	}
+	if _, err := userForSession(ctx, db, deleteUserSession); err == nil {
+		t.Fatal("deleted user's session remained usable")
+	}
+	if _, err := userForAPIToken(ctx, db, deleteUserToken); err == nil {
+		t.Fatal("deleted user's API token remained usable")
+	}
+	var ownedSkills int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM skills WHERE owner_id = ?`, deleteUserTarget.ID).Scan(&ownedSkills); err != nil {
+		t.Fatal(err)
+	}
+	if ownedSkills != 0 {
+		t.Fatalf("deleted user's skills = %d, want 0", ownedSkills)
 	}
 }
 
@@ -1671,7 +1744,7 @@ func TestSkillDetailPreviewsSupportingFiles(t *testing.T) {
 		Body:        "# Preview Files\n\nInstructions.",
 		Files: []SkillFile{
 			{Path: "references/guide.md", Content: "# Guide\n\n<script>alert(1)</script>\n"},
-			{Path: "assets/pixel.bin", Content: "\x00\x01", ContentType: "application/octet-stream"},
+			{Path: "references/example.json", Content: `{"ok":true}`},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -1692,7 +1765,7 @@ func TestSkillDetailPreviewsSupportingFiles(t *testing.T) {
 		t.Fatalf("detail page = %d: %s", w.Code, w.Body.String())
 	}
 	body := w.Body.String()
-	for _, want := range []string{"Supporting Files", "references/guide.md", "# Guide", "assets/pixel.bin", "Preview unavailable"} {
+	for _, want := range []string{"Supporting Files", "references/guide.md", "# Guide", "references/example.json", `{&#34;ok&#34;:true}`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("detail page missing %q:\n%s", want, body)
 		}

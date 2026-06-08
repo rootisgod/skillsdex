@@ -114,8 +114,33 @@ type RetentionStats struct {
 	ExpiredSessions    int64
 	RevokedAPITokens   int64
 	OldAuditEvents     int64
+	PrunedRevisions    int64
+	PrunedFiles        int64
 	AuditRetentionDays int
 	TokenRetentionDays int
+	RevisionKeep       int
+	DatabaseBytes      int64
+	MaxDatabaseBytes   int64
+	SkillBytes         int64
+	MaxUserStoredBytes int64
+	TopUsers           []StorageUserStats
+	TopSkills          []StorageSkillStats
+}
+
+type StorageUserStats struct {
+	UserID        string
+	Username      string
+	SkillCount    int
+	RevisionCount int
+	StoredBytes   int64
+}
+
+type StorageSkillStats struct {
+	ID            string
+	OwnerSlug     string
+	Slug          string
+	RevisionCount int
+	StoredBytes   int64
 }
 
 type SkillInput struct {

@@ -19,6 +19,11 @@ import (
 
 const maxImportedSkillBytes = 1 << 20
 const maxSkillsDexExportBytes = 16 << 20
+const maxRequestBodyBytes = maxSkillsDexExportBytes
+const maxUserSkills = 1000
+const maxSkillRevisions = 100
+const maxUserStoredBytes = 256 << 20
+const maxDatabaseBytes = 1 << 30
 
 var errGitHubNotFound = errors.New("github content not found")
 

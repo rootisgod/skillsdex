@@ -216,7 +216,7 @@ func (a *app) requireWeb(next http.HandlerFunc) http.HandlerFunc {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
-		if r.Method == http.MethodPost && isMultipartForm(r) {
+		if r.Method == http.MethodPost {
 			r.Body = http.MaxBytesReader(w, r.Body, maxSkillsDexExportBytes)
 		}
 		if r.Method == http.MethodPost && !a.validCSRF(r, c.Value) {
@@ -598,9 +598,10 @@ func (a *app) handleAdminMaintenance(w http.ResponseWriter, r *http.Request) {
 	}
 	const defaultAuditDays = 180
 	const defaultTokenDays = 90
+	const defaultRevisionKeep = 50
 	switch r.Method {
 	case http.MethodGet:
-		stats, err := retentionStats(r.Context(), a.db, defaultAuditDays, defaultTokenDays)
+		stats, err := retentionStats(r.Context(), a.db, defaultAuditDays, defaultTokenDays, defaultRevisionKeep)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -613,17 +614,23 @@ func (a *app) handleAdminMaintenance(w http.ResponseWriter, r *http.Request) {
 		}
 		auditDays, err := parseRetentionDays(r.FormValue("audit_days"), defaultAuditDays)
 		if err != nil {
-			stats, _ := retentionStats(r.Context(), a.db, defaultAuditDays, defaultTokenDays)
+			stats, _ := retentionStats(r.Context(), a.db, defaultAuditDays, defaultTokenDays, defaultRevisionKeep)
 			a.render(w, r, webUser(r), "Maintenance", maintenancePage(stats, err.Error()))
 			return
 		}
 		tokenDays, err := parseRetentionDays(r.FormValue("revoked_token_days"), defaultTokenDays)
 		if err != nil {
-			stats, _ := retentionStats(r.Context(), a.db, defaultAuditDays, defaultTokenDays)
+			stats, _ := retentionStats(r.Context(), a.db, defaultAuditDays, defaultTokenDays, defaultRevisionKeep)
 			a.render(w, r, webUser(r), "Maintenance", maintenancePage(stats, err.Error()))
 			return
 		}
-		pruned, err := pruneRetention(r.Context(), a.db, auditDays, tokenDays)
+		revisionKeep, err := parseRevisionKeep(r.FormValue("revision_keep"), defaultRevisionKeep)
+		if err != nil {
+			stats, _ := retentionStats(r.Context(), a.db, defaultAuditDays, defaultTokenDays, defaultRevisionKeep)
+			a.render(w, r, webUser(r), "Maintenance", maintenancePage(stats, err.Error()))
+			return
+		}
+		pruned, err := pruneRetention(r.Context(), a.db, auditDays, tokenDays, revisionKeep)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -632,19 +639,34 @@ func (a *app) handleAdminMaintenance(w http.ResponseWriter, r *http.Request) {
 			"expired_sessions":   pruned.ExpiredSessions,
 			"revoked_api_tokens": pruned.RevokedAPITokens,
 			"old_audit_events":   pruned.OldAuditEvents,
+			"skill_revisions":    pruned.PrunedRevisions,
+			"revision_files":     pruned.PrunedFiles,
 			"audit_days":         auditDays,
 			"revoked_token_days": tokenDays,
+			"revision_keep":      revisionKeep,
 		})
-		stats, err := retentionStats(r.Context(), a.db, auditDays, tokenDays)
+		stats, err := retentionStats(r.Context(), a.db, auditDays, tokenDays, revisionKeep)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		msg := fmt.Sprintf("Pruned %d expired session(s), %d revoked API token(s), and %d audit event(s).", pruned.ExpiredSessions, pruned.RevokedAPITokens, pruned.OldAuditEvents)
+		msg := fmt.Sprintf("Pruned %d expired session(s), %d revoked API token(s), %d audit event(s), %d old revision(s), and %d revision file(s).", pruned.ExpiredSessions, pruned.RevokedAPITokens, pruned.OldAuditEvents, pruned.PrunedRevisions, pruned.PrunedFiles)
 		a.render(w, r, webUser(r), "Maintenance", maintenancePage(stats, msg))
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func parseRevisionKeep(raw string, fallback int) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fallback, nil
+	}
+	keep, err := strconv.Atoi(raw)
+	if err != nil || keep < 1 || keep > maxSkillRevisions {
+		return 0, fmt.Errorf("revision keep count must be between 1 and %d", maxSkillRevisions)
+	}
+	return keep, nil
 }
 
 func parseRetentionDays(raw string, fallback int) (int, error) {
@@ -687,10 +709,38 @@ func (a *app) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) handleAdminUserEdit(w http.ResponseWriter, r *http.Request) {
-	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/admin/users/"), "/")
+	rel := strings.Trim(strings.TrimPrefix(r.URL.Path, "/admin/users/"), "/")
+	parts := strings.Split(rel, "/")
+	if len(parts) == 0 || parts[0] == "" || len(parts) > 2 {
+		http.NotFound(w, r)
+		return
+	}
+	id := parts[0]
 	u, err := getUserByID(r.Context(), a.db, id)
 	if err != nil {
 		http.NotFound(w, r)
+		return
+	}
+	if len(parts) == 2 {
+		if parts[1] != "delete" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		actor := webUser(r)
+		if actor != nil && actor.ID == id {
+			a.render(w, r, actor, "Edit User", userEditPage(u, "cannot delete your own account"))
+			return
+		}
+		if err := deleteUser(r.Context(), a.db, id); err != nil {
+			a.render(w, r, actor, "Edit User", userEditPage(u, err.Error()))
+			return
+		}
+		a.audit(r, actor, "user_deleted", "user", id, u.Username, nil)
+		http.Redirect(w, r, "/admin/users", http.StatusFound)
 		return
 	}
 	if r.Method == http.MethodGet {
@@ -1610,6 +1660,9 @@ func (a *app) handleAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	}
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/"), "/")
 	if path == "me" && r.Method == http.MethodGet {
 		writeJSON(w, map[string]any{"username": u.Username, "is_admin": u.IsAdmin})
@@ -1633,7 +1686,7 @@ func (a *app) handleAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	if path == "skills" && r.Method == http.MethodPost {
 		var in SkillInput
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		if err := json.NewDecoder(io.LimitReader(r.Body, maxRequestBodyBytes+1)).Decode(&in); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid json")
 			return
 		}
@@ -1827,7 +1880,7 @@ func (a *app) handleSkillAPI(w http.ResponseWriter, r *http.Request, u *User, re
 			writeJSON(w, map[string]any{"skill": s, "raw": raw, "files": files})
 		case http.MethodPut:
 			var in SkillInput
-			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			if err := json.NewDecoder(io.LimitReader(r.Body, maxRequestBodyBytes+1)).Decode(&in); err != nil {
 				writeJSONError(w, http.StatusBadRequest, "invalid json")
 				return
 			}
@@ -1857,7 +1910,7 @@ func (a *app) handleSkillAPI(w http.ResponseWriter, r *http.Request, u *User, re
 	}
 	if len(parts) == 3 && parts[2] == "flags" && r.Method == http.MethodPut {
 		var in SkillFlagUpdate
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		if err := json.NewDecoder(io.LimitReader(r.Body, maxRequestBodyBytes+1)).Decode(&in); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid json")
 			return
 		}
@@ -2116,7 +2169,7 @@ func auditPage(events []AuditEvent) template.HTML {
 
 func maintenancePage(stats RetentionStats, msg string) template.HTML {
 	var b strings.Builder
-	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Admin</p><h1>Maintenance</h1><p>Prune old operational records without touching skills, revisions, backups, or users.</p></div><div class="page-art users-art" aria-hidden="true">` + icon("archive") + `</div></header><div class="split"><section class="surface">`)
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Admin</p><h1>Maintenance</h1><p>Prune old operational records and watch storage growth.</p></div><div class="page-art users-art" aria-hidden="true">` + icon("archive") + `</div></header><div class="split"><section class="surface">`)
 	if msg != "" {
 		b.WriteString(`<p class="flash">` + html.EscapeString(msg) + `</p>`)
 	}
@@ -2124,13 +2177,31 @@ func maintenancePage(stats RetentionStats, msg string) template.HTML {
 	b.WriteString(`<span><strong>` + fmt.Sprintf("%d", stats.ExpiredSessions) + `</strong> expired sessions</span>`)
 	b.WriteString(`<span><strong>` + fmt.Sprintf("%d", stats.RevokedAPITokens) + `</strong> revoked tokens older than ` + fmt.Sprintf("%d", stats.TokenRetentionDays) + ` days</span>`)
 	b.WriteString(`<span><strong>` + fmt.Sprintf("%d", stats.OldAuditEvents) + `</strong> audit events older than ` + fmt.Sprintf("%d", stats.AuditRetentionDays) + ` days</span>`)
+	b.WriteString(`<span><strong>` + html.EscapeString(formatBytes(stats.DatabaseBytes)) + `</strong> database of ` + html.EscapeString(formatBytes(stats.MaxDatabaseBytes)) + ` max</span>`)
+	b.WriteString(`<span><strong>` + html.EscapeString(formatBytes(stats.SkillBytes)) + `</strong> stored skill files</span>`)
 	b.WriteString(`</div><table><thead><tr><th>Record</th><th>Retention</th><th>Action</th></tr></thead><tbody>`)
 	b.WriteString(`<tr><td>Expired web sessions</td><td>Removed when already expired</td><td>Delete session rows only</td></tr>`)
 	b.WriteString(`<tr><td>Revoked API tokens</td><td>` + fmt.Sprintf("%d", stats.TokenRetentionDays) + ` days after revocation</td><td>Delete token metadata for already-revoked tokens</td></tr>`)
 	b.WriteString(`<tr><td>Audit events</td><td>` + fmt.Sprintf("%d", stats.AuditRetentionDays) + ` days after event time</td><td>Delete old audit rows, then record this prune</td></tr>`)
+	b.WriteString(`<tr><td>Skill revisions</td><td>Keep latest ` + fmt.Sprintf("%d", stats.RevisionKeep) + ` per skill</td><td>Delete older revision files and metadata</td></tr>`)
+	b.WriteString(`</tbody></table><h2>Largest Users</h2><table><thead><tr><th>User</th><th>Skills</th><th>Revisions</th><th>Stored</th></tr></thead><tbody>`)
+	if len(stats.TopUsers) == 0 {
+		b.WriteString(`<tr><td colspan="4"><div class="empty">No user storage yet.</div></td></tr>`)
+	}
+	for _, row := range stats.TopUsers {
+		b.WriteString(`<tr><td>` + html.EscapeString(row.Username) + `</td><td>` + fmt.Sprintf("%d", row.SkillCount) + `</td><td>` + fmt.Sprintf("%d", row.RevisionCount) + `</td><td>` + html.EscapeString(formatBytes(row.StoredBytes)) + ` of ` + html.EscapeString(formatBytes(stats.MaxUserStoredBytes)) + `</td></tr>`)
+	}
+	b.WriteString(`</tbody></table><h2>Largest Skills</h2><table><thead><tr><th>Skill</th><th>Revisions</th><th>Stored</th></tr></thead><tbody>`)
+	if len(stats.TopSkills) == 0 {
+		b.WriteString(`<tr><td colspan="3"><div class="empty">No skill storage yet.</div></td></tr>`)
+	}
+	for _, row := range stats.TopSkills {
+		b.WriteString(`<tr><td>` + html.EscapeString(row.OwnerSlug+"/"+row.Slug) + `</td><td>` + fmt.Sprintf("%d", row.RevisionCount) + `</td><td>` + html.EscapeString(formatBytes(row.StoredBytes)) + `</td></tr>`)
+	}
 	b.WriteString(`</tbody></table></section><aside class="panel sticky"><div class="panel-head"><div class="panel-icon">` + icon("trash") + `</div><div><h2>Prune Data</h2><p>Keep the database small while preserving active access and skill history.</p></div></div><form method="post" action="/admin/maintenance">
 		<label>Audit event retention days <input name="audit_days" type="number" min="1" max="3650" value="` + fmt.Sprintf("%d", stats.AuditRetentionDays) + `" required></label>
 		<label>Revoked token retention days <input name="revoked_token_days" type="number" min="1" max="3650" value="` + fmt.Sprintf("%d", stats.TokenRetentionDays) + `" required></label>
+		<label>Revisions to keep per skill <input name="revision_keep" type="number" min="1" max="` + fmt.Sprintf("%d", maxSkillRevisions) + `" value="` + fmt.Sprintf("%d", stats.RevisionKeep) + `" required></label>
 		<button type="submit">` + iconLabel("trash", "Prune") + `</button>
 	</form></aside></div>`)
 	return template.HTML(b.String())
@@ -2170,7 +2241,10 @@ func userEditPage(u *User, msg string) template.HTML {
 	if u.DeactivatedAt != nil {
 		b.WriteString(` checked`)
 	}
-	b.WriteString(`> Deactivated</label><button type="submit">` + iconLabel("edit", "Save") + `</button></form></section>`)
+	b.WriteString(`> Deactivated</label><button type="submit">` + iconLabel("edit", "Save") + `</button></form>
+	<form class="inline-danger" method="post" action="/admin/users/` + html.EscapeString(u.ID) + `/delete" onsubmit="return confirm('Delete user ` + html.EscapeString(u.Username) + ` and all owned skills? This cannot be undone.');">
+		<button class="link danger" type="submit">` + iconLabel("trash", "Delete user") + `</button>
+	</form></section>`)
 	return template.HTML(b.String())
 }
 

@@ -854,10 +854,13 @@ func listAuditEvents(ctx context.Context, db *sql.DB, limit int) ([]AuditEvent, 
 	return events, rows.Err()
 }
 
-func retentionStats(ctx context.Context, db *sql.DB, auditDays, tokenDays int) (RetentionStats, error) {
+func retentionStats(ctx context.Context, db *sql.DB, auditDays, tokenDays, revisionKeep int) (RetentionStats, error) {
 	stats := RetentionStats{
 		AuditRetentionDays: auditDays,
 		TokenRetentionDays: tokenDays,
+		RevisionKeep:       revisionKeep,
+		MaxDatabaseBytes:   maxDatabaseBytes,
+		MaxUserStoredBytes: maxUserStoredBytes,
 	}
 	now := nowUTC().Format(time.RFC3339)
 	auditCutoff := nowUTC().AddDate(0, 0, -auditDays).Format(time.RFC3339)
@@ -871,10 +874,18 @@ func retentionStats(ctx context.Context, db *sql.DB, auditDays, tokenDays int) (
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE created_at <= ?`, auditCutoff).Scan(&stats.OldAuditEvents); err != nil {
 		return RetentionStats{}, err
 	}
+	databaseBytes, skillBytes, topUsers, topSkills, err := storageStats(ctx, db)
+	if err != nil {
+		return RetentionStats{}, err
+	}
+	stats.DatabaseBytes = databaseBytes
+	stats.SkillBytes = skillBytes
+	stats.TopUsers = topUsers
+	stats.TopSkills = topSkills
 	return stats, nil
 }
 
-func pruneRetention(ctx context.Context, db *sql.DB, auditDays, tokenDays int) (RetentionStats, error) {
+func pruneRetention(ctx context.Context, db *sql.DB, auditDays, tokenDays, revisionKeep int) (RetentionStats, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return RetentionStats{}, err
@@ -886,6 +897,7 @@ func pruneRetention(ctx context.Context, db *sql.DB, auditDays, tokenDays int) (
 	stats := RetentionStats{
 		AuditRetentionDays: auditDays,
 		TokenRetentionDays: tokenDays,
+		RevisionKeep:       revisionKeep,
 	}
 	if stats.ExpiredSessions, err = deleteCount(ctx, tx, `DELETE FROM web_sessions WHERE expires_at <= ?`, now); err != nil {
 		return RetentionStats{}, err
@@ -896,10 +908,158 @@ func pruneRetention(ctx context.Context, db *sql.DB, auditDays, tokenDays int) (
 	if stats.OldAuditEvents, err = deleteCount(ctx, tx, `DELETE FROM audit_events WHERE created_at <= ?`, auditCutoff); err != nil {
 		return RetentionStats{}, err
 	}
+	if stats.PrunedRevisions, stats.PrunedFiles, err = pruneOldSkillRevisions(ctx, tx, revisionKeep); err != nil {
+		return RetentionStats{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return RetentionStats{}, err
 	}
 	return stats, nil
+}
+
+func pruneOldSkillRevisions(ctx context.Context, tx *sql.Tx, keep int) (int64, int64, error) {
+	if keep < 1 {
+		return 0, 0, errors.New("revision keep count must be at least 1")
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM skills`)
+	if err != nil {
+		return 0, 0, err
+	}
+	var skillIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return 0, 0, err
+		}
+		skillIDs = append(skillIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return 0, 0, err
+	}
+	var revisionIDs []string
+	for _, skillID := range skillIDs {
+		revRows, err := tx.QueryContext(ctx, `SELECT id FROM skill_revisions WHERE skill_id = ? ORDER BY revision_number DESC LIMIT -1 OFFSET ?`, skillID, keep)
+		if err != nil {
+			return 0, 0, err
+		}
+		for revRows.Next() {
+			var id string
+			if err := revRows.Scan(&id); err != nil {
+				_ = revRows.Close()
+				return 0, 0, err
+			}
+			revisionIDs = append(revisionIDs, id)
+		}
+		if err := revRows.Err(); err != nil {
+			_ = revRows.Close()
+			return 0, 0, err
+		}
+		if err := revRows.Close(); err != nil {
+			return 0, 0, err
+		}
+	}
+	var filesDeleted int64
+	for _, revID := range revisionIDs {
+		count, err := deleteCount(ctx, tx, `DELETE FROM skill_revision_files WHERE revision_id = ?`, revID)
+		if err != nil {
+			return 0, 0, err
+		}
+		filesDeleted += count
+	}
+	var revisionsDeleted int64
+	for _, revID := range revisionIDs {
+		count, err := deleteCount(ctx, tx, `DELETE FROM skill_revisions WHERE id = ?`, revID)
+		if err != nil {
+			return 0, 0, err
+		}
+		revisionsDeleted += count
+	}
+	return revisionsDeleted, filesDeleted, nil
+}
+
+func storageStats(ctx context.Context, db *sql.DB) (databaseBytes int64, skillBytes int64, topUsers []StorageUserStats, topSkills []StorageSkillStats, err error) {
+	databaseBytes, err = databaseSizeBytes(ctx, db)
+	if err != nil {
+		return 0, 0, nil, nil, err
+	}
+	if err = db.QueryRowContext(ctx, `SELECT COALESCE(SUM(size_bytes), 0) FROM skill_revision_files`).Scan(&skillBytes); err != nil {
+		return 0, 0, nil, nil, err
+	}
+	userRows, err := db.QueryContext(ctx, `SELECT u.id, u.username, COUNT(DISTINCT s.id), COUNT(DISTINCT r.id), COALESCE(SUM(f.size_bytes), 0)
+		FROM users u
+		LEFT JOIN skills s ON s.owner_id = u.id
+		LEFT JOIN skill_revisions r ON r.skill_id = s.id
+		LEFT JOIN skill_revision_files f ON f.revision_id = r.id
+		GROUP BY u.id
+		ORDER BY COALESCE(SUM(f.size_bytes), 0) DESC, u.username
+		LIMIT 10`)
+	if err != nil {
+		return 0, 0, nil, nil, err
+	}
+	defer userRows.Close()
+	for userRows.Next() {
+		var row StorageUserStats
+		if err := userRows.Scan(&row.UserID, &row.Username, &row.SkillCount, &row.RevisionCount, &row.StoredBytes); err != nil {
+			return 0, 0, nil, nil, err
+		}
+		topUsers = append(topUsers, row)
+	}
+	if err := userRows.Err(); err != nil {
+		return 0, 0, nil, nil, err
+	}
+	skillRows, err := db.QueryContext(ctx, `SELECT s.id, s.owner_slug, s.slug, COUNT(DISTINCT r.id), COALESCE(SUM(f.size_bytes), 0)
+		FROM skills s
+		LEFT JOIN skill_revisions r ON r.skill_id = s.id
+		LEFT JOIN skill_revision_files f ON f.revision_id = r.id
+		GROUP BY s.id
+		ORDER BY COALESCE(SUM(f.size_bytes), 0) DESC, s.owner_slug, s.slug
+		LIMIT 10`)
+	if err != nil {
+		return 0, 0, nil, nil, err
+	}
+	defer skillRows.Close()
+	for skillRows.Next() {
+		var row StorageSkillStats
+		if err := skillRows.Scan(&row.ID, &row.OwnerSlug, &row.Slug, &row.RevisionCount, &row.StoredBytes); err != nil {
+			return 0, 0, nil, nil, err
+		}
+		topSkills = append(topSkills, row)
+	}
+	if err := skillRows.Err(); err != nil {
+		return 0, 0, nil, nil, err
+	}
+	return databaseBytes, skillBytes, topUsers, topSkills, nil
+}
+
+func databaseSizeBytes(ctx context.Context, q queryer) (int64, error) {
+	var pageCount, pageSize int64
+	if err := q.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pageCount); err != nil {
+		return 0, err
+	}
+	if err := q.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize); err != nil {
+		return 0, err
+	}
+	return pageCount * pageSize, nil
+}
+
+func formatBytes(n int64) string {
+	const unit = int64(1024)
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	value := float64(n)
+	for _, suffix := range []string{"KiB", "MiB", "GiB", "TiB"} {
+		value = value / float64(unit)
+		if value < float64(unit) {
+			return fmt.Sprintf("%.1f %s", value, suffix)
+		}
+	}
+	return fmt.Sprintf("%.1f PiB", value/float64(unit))
 }
 
 func deleteCount(ctx context.Context, tx *sql.Tx, query string, args ...any) (int64, error) {
@@ -970,6 +1130,64 @@ func updateUser(ctx context.Context, db *sql.DB, id, email, password string, isA
 	return nil
 }
 
+func deleteUser(ctx context.Context, db *sql.DB, id string) error {
+	current, err := getUserByID(ctx, db, id)
+	if err != nil {
+		return err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if current.IsAdmin && current.DeactivatedAt == nil {
+		remaining, err := activeAdminCountExcluding(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if remaining == 0 {
+			return errors.New("cannot delete the last active admin")
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM web_sessions WHERE user_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM api_tokens WHERE user_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM install_set_skills WHERE set_id IN (SELECT id FROM install_sets WHERE user_id = ?)`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM install_set_skills WHERE skill_id IN (SELECT id FROM skills WHERE owner_id = ?)`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM install_sets WHERE user_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM skill_tags WHERE skill_id IN (SELECT id FROM skills WHERE owner_id = ?)`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM tags WHERE user_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM skill_revision_files WHERE revision_id IN (SELECT r.id FROM skill_revisions r JOIN skills s ON s.id = r.skill_id WHERE s.owner_id = ?)`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM skill_revisions WHERE skill_id IN (SELECT id FROM skills WHERE owner_id = ?)`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM skills WHERE owner_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE audit_events SET actor_user_id = NULL WHERE actor_user_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func setUserMustChangePassword(ctx context.Context, db *sql.DB, userID string, required bool) error {
 	_, err := db.ExecContext(ctx, `UPDATE users SET must_change_password = ? WHERE id = ?`, boolInt(required), userID)
 	return err
@@ -1005,7 +1223,7 @@ func validatePassword(password string) error {
 	return nil
 }
 
-func activeAdminCountExcluding(ctx context.Context, db *sql.DB, excludedUserID string) (int, error) {
+func activeAdminCountExcluding(ctx context.Context, db queryer, excludedUserID string) (int, error) {
 	var count int
 	err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE is_admin = 1 AND deactivated_at IS NULL AND id <> ?`, excludedUserID).Scan(&count)
 	return count, err
@@ -1329,6 +1547,9 @@ func createSkill(ctx context.Context, db *sql.DB, user *User, in SkillInput) (*S
 		return nil, err
 	}
 	defer tx.Rollback()
+	if err := enforceUserSkillCountLimit(ctx, tx, user.ID); err != nil {
+		return nil, err
+	}
 	now := nowUTC().Format(time.RFC3339)
 	skillID := newID("skl")
 	source := normalizedSource(in)
@@ -1435,6 +1656,11 @@ type sourceMetadata struct {
 	Name     string
 	Path     string
 	Ref      string
+}
+
+type queryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
 func normalizedSource(in SkillInput) sourceMetadata {
@@ -1604,6 +1830,9 @@ func insertRevision(ctx context.Context, tx *sql.Tx, skillID string, number int,
 	if err != nil {
 		return "", err
 	}
+	if err := enforceRevisionQuota(ctx, tx, skillID, userID, totalSize); err != nil {
+		return "", err
+	}
 	frontmatter, _ := json.Marshal(map[string]any{
 		"name":              strings.TrimSpace(in.Name),
 		"description":       strings.TrimSpace(in.Description),
@@ -1636,6 +1865,9 @@ func insertRevision(ctx context.Context, tx *sql.Tx, skillID string, number int,
 
 func normalizedSkillFiles(in SkillInput) ([]SkillFile, int, error) {
 	main := SkillFile{Path: "SKILL.md", Content: renderSkillMarkdown(in), ContentType: "text/markdown; charset=utf-8"}
+	if err := validateTextSkillFile(main.Path, main.Content); err != nil {
+		return nil, 0, err
+	}
 	files := []SkillFile{main}
 	seen := map[string]bool{"SKILL.md": true}
 	total := len([]byte(main.Content))
@@ -1645,6 +1877,9 @@ func normalizedSkillFiles(in SkillInput) ([]SkillFile, int, error) {
 			continue
 		}
 		if err := validateSkillFilePath(file.Path); err != nil {
+			return nil, 0, err
+		}
+		if err := validateTextSkillFile(file.Path, file.Content); err != nil {
 			return nil, 0, err
 		}
 		if file.Path == "SKILL.md" {
@@ -1672,6 +1907,46 @@ func normalizedSkillFiles(in SkillInput) ([]SkillFile, int, error) {
 		return supporting[i].Path < supporting[j].Path
 	})
 	return files, total, nil
+}
+
+func enforceUserSkillCountLimit(ctx context.Context, q queryer, userID string) error {
+	var count int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM skills WHERE owner_id = ?`, userID).Scan(&count); err != nil {
+		return err
+	}
+	if count >= maxUserSkills {
+		return fmt.Errorf("user skill quota exceeded; limit is %d skills", maxUserSkills)
+	}
+	return nil
+}
+
+func enforceRevisionQuota(ctx context.Context, q queryer, skillID, userID string, incomingBytes int) error {
+	var revisionCount int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM skill_revisions WHERE skill_id = ?`, skillID).Scan(&revisionCount); err != nil {
+		return err
+	}
+	if revisionCount >= maxSkillRevisions {
+		return fmt.Errorf("skill revision quota exceeded; limit is %d revisions per skill", maxSkillRevisions)
+	}
+	var userBytes int64
+	if err := q.QueryRowContext(ctx, `SELECT COALESCE(SUM(f.size_bytes), 0)
+		FROM skills s
+		JOIN skill_revisions r ON r.skill_id = s.id
+		JOIN skill_revision_files f ON f.revision_id = r.id
+		WHERE s.owner_id = ?`, userID).Scan(&userBytes); err != nil {
+		return err
+	}
+	if userBytes+int64(incomingBytes) > maxUserStoredBytes {
+		return fmt.Errorf("user storage quota exceeded; limit is %s", formatBytes(maxUserStoredBytes))
+	}
+	dbBytes, err := databaseSizeBytes(ctx, q)
+	if err != nil {
+		return err
+	}
+	if dbBytes+int64(incomingBytes) > maxDatabaseBytes {
+		return fmt.Errorf("database storage quota exceeded; limit is %s", formatBytes(maxDatabaseBytes))
+	}
+	return nil
 }
 
 func contentTypeForPath(filePath string) string {

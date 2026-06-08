@@ -379,6 +379,24 @@ task prod:backup-now
 task prod:caddyfile-check
 ```
 
+### Storage Guardrails
+
+Application writes enforce these defaults:
+
+- `16 MiB` maximum request body and skill package/backup restore upload.
+- `1 MiB` maximum per skill file.
+- Supporting files must be supported UTF-8 text types.
+- `1,000` skills per user.
+- `100` revisions per skill.
+- `256 MiB` stored skill file bytes per user.
+- `1 GiB` SQLite database size guardrail.
+
+Use `Admin > Maintenance` to review database size, largest users/skills, prune
+expired sessions, revoked token metadata, old audit events, and older skill
+revisions while keeping the newest configured revisions per skill. Hard-deleting
+a user removes the account and owned skills, revisions, sessions, tokens, tags,
+and install sets; deactivation remains the reversible lockout option.
+
 ### Account Recovery
 
 If the only admin password is lost, use local shell access:
