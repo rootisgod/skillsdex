@@ -1,0 +1,10 @@
+.git
+.github
+.skillsdex
+skillsdex
+dist
+tmp
+*.db
+*.log
+Dockerfile
+docker-compose.yml

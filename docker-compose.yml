@@ -1,0 +1,21 @@
+services:
+  skillsdex:
+    build: .
+    image: skillsdex:local
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    environment:
+      SKILLSDEX_HOME: /data
+    volumes:
+      - skillsdex-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  skillsdex-data:

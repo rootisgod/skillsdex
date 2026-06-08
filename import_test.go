@@ -1,9 +1,12 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -63,6 +66,33 @@ func TestSkillInputFromRawMarkdown(t *testing.T) {
 	}
 	if in.Body != "# Dynamic Workflows\n\nInstructions." {
 		t.Fatalf("body = %q", in.Body)
+	}
+}
+
+func TestImportSkillsDexExportRejectsTraversalPath(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	manifest, err := zw.Create("skillsdex-export.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manifest.Write([]byte(`{"skills":[{"identifier":"admin/evil","name":"Evil","description":"Use when testing.","path":"../evil/SKILL.md"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	skill, err := zw.Create("../evil/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := skill.Write([]byte("# Evil")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = importSkillInputsFromSkillsDexExport(buf.Bytes(), "admin")
+	if err == nil || !strings.Contains(err.Error(), "traversal") {
+		t.Fatalf("expected traversal error, got %v", err)
 	}
 }
 
@@ -138,6 +168,202 @@ func TestImportSkillInputsFromAgentSkill(t *testing.T) {
 	}
 }
 
+func TestRefreshImportedSkillUpdatesFromSourceAndPreservesInstallFlags(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := createSkill(ctx, db, admin, SkillInput{
+		Owner:            "admin",
+		Slug:             "openclaw-debugging",
+		Name:             "openclaw-debugging",
+		Description:      "Use when debugging OpenClaw logs.",
+		ShortDescription: "Debug logs",
+		PinnedInstall:    true,
+		SourceProvider:   "agentskill.sh",
+		SourceURL:        "https://agentskill.sh/@openclaw/openclaw-debugging",
+		SourceExplicit:   true,
+		Body:             "# OpenClaw Debugging\n\nOld instructions.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != "https://agentskill.sh/api/agent/skills/openclaw%2Fopenclaw-debugging/install" {
+			t.Fatalf("unexpected request: %s", r.URL.String())
+		}
+		return testResponse(http.StatusOK, `{
+			"slug": "openclaw/openclaw-debugging",
+			"name": "openclaw-debugging",
+			"description": "Use when debugging OpenClaw logs.",
+			"skillMd": "---\nname: openclaw-debugging\ndescription: Use when debugging OpenClaw logs.\nmetadata:\n  short-description: Debug logs\n---\n\n# OpenClaw Debugging\n\nNew instructions.\n"
+		}`), nil
+	})}
+
+	updated, status, changes, err := refreshImportedSkill(ctx, db, client, admin, "admin", "openclaw-debugging", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "updated from source" {
+		t.Fatalf("status = %q, want updated from source", status)
+	}
+	if len(changes) != 1 || changes[0].Path != "SKILL.md" || changes[0].Status != "modified" {
+		t.Fatalf("changes = %#v, want modified SKILL.md", changes)
+	}
+	if !updated.PinnedInstall {
+		t.Fatal("refresh did not preserve pinned install")
+	}
+	if updated.RevisionNumber != created.RevisionNumber+1 {
+		t.Fatalf("revision = %d, want %d", updated.RevisionNumber, created.RevisionNumber+1)
+	}
+	raw, _, err := rawSkill(ctx, db, admin.ID, "admin", "openclaw-debugging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "New instructions.") || strings.Contains(string(raw), "Old instructions.") {
+		t.Fatalf("refresh did not update raw skill:\n%s", raw)
+	}
+}
+
+func TestRefreshImportedSkillDryRunDoesNotUpdateRevision(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := createSkill(ctx, db, admin, SkillInput{
+		Owner:          "admin",
+		Slug:           "openclaw-debugging",
+		Name:           "openclaw-debugging",
+		Description:    "Use when debugging OpenClaw logs.",
+		SourceProvider: "agentskill.sh",
+		SourceURL:      "https://agentskill.sh/@openclaw/openclaw-debugging",
+		SourceExplicit: true,
+		Body:           "# OpenClaw Debugging\n\nOld instructions.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return testResponse(http.StatusOK, `{
+			"slug": "openclaw/openclaw-debugging",
+			"name": "openclaw-debugging",
+			"description": "Use when debugging OpenClaw logs.",
+			"skillMd": "---\nname: openclaw-debugging\ndescription: Use when debugging OpenClaw logs.\n---\n\n# OpenClaw Debugging\n\nNew instructions.\n"
+		}`), nil
+	})}
+
+	preview, status, changes, err := refreshImportedSkill(ctx, db, client, admin, "admin", "openclaw-debugging", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "update available" {
+		t.Fatalf("status = %q, want update available", status)
+	}
+	if len(changes) != 1 || changes[0].Path != "SKILL.md" || changes[0].Status != "modified" {
+		t.Fatalf("changes = %#v, want modified SKILL.md", changes)
+	}
+	if preview.RevisionNumber != created.RevisionNumber {
+		t.Fatalf("preview revision = %d, want %d", preview.RevisionNumber, created.RevisionNumber)
+	}
+	raw, _, err := rawSkill(ctx, db, admin.ID, "admin", "openclaw-debugging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "Old instructions.") || strings.Contains(string(raw), "New instructions.") {
+		t.Fatalf("dry-run changed raw skill:\n%s", raw)
+	}
+}
+
+func TestRefreshImportedSkillReportsPackageFileChanges(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = createSkill(ctx, db, admin, SkillInput{
+		Owner:          "admin",
+		Slug:           "folder-skill",
+		Name:           "folder-skill",
+		Description:    "Use when testing folder refresh.",
+		SourceProvider: "github",
+		SourceURL:      "https://github.com/acme/skills/tree/main/folder-skill",
+		SourceExplicit: true,
+		Body:           "# Folder Skill\n\nOld instructions.",
+		Files: []SkillFile{
+			{Path: "references/old.md", Content: "old\n"},
+			{Path: "scripts/run.sh", Content: "echo old\n", Executable: true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.String() {
+		case "https://api.github.com/repos/acme/skills/contents/folder-skill?ref=main":
+			return testResponse(http.StatusOK, `[
+				{"name":"SKILL.md","path":"folder-skill/SKILL.md","type":"file","download_url":"https://raw.githubusercontent.com/acme/skills/main/folder-skill/SKILL.md"},
+				{"name":"references","path":"folder-skill/references","type":"dir","download_url":""},
+				{"name":"scripts","path":"folder-skill/scripts","type":"dir","download_url":""}
+			]`), nil
+		case "https://api.github.com/repos/acme/skills/contents/folder-skill/SKILL.md?ref=main":
+			return testResponse(http.StatusOK, `{"name":"SKILL.md","path":"folder-skill/SKILL.md","type":"file","download_url":"https://raw.githubusercontent.com/acme/skills/main/folder-skill/SKILL.md","html_url":"https://github.com/acme/skills/blob/main/folder-skill/SKILL.md"}`), nil
+		case "https://api.github.com/repos/acme/skills/contents/folder-skill/references?ref=main":
+			return testResponse(http.StatusOK, `[
+				{"name":"new.md","path":"folder-skill/references/new.md","type":"file","download_url":"https://raw.githubusercontent.com/acme/skills/main/folder-skill/references/new.md"}
+			]`), nil
+		case "https://api.github.com/repos/acme/skills/contents/folder-skill/scripts?ref=main":
+			return testResponse(http.StatusOK, `[
+				{"name":"run.sh","path":"folder-skill/scripts/run.sh","type":"file","download_url":"https://raw.githubusercontent.com/acme/skills/main/folder-skill/scripts/run.sh"}
+			]`), nil
+		case "https://raw.githubusercontent.com/acme/skills/main/folder-skill/SKILL.md":
+			return testResponse(http.StatusOK, "---\nname: folder-skill\ndescription: Use when testing folder refresh.\n---\n\n# Folder Skill\n\nNew instructions.\n"), nil
+		case "https://raw.githubusercontent.com/acme/skills/main/folder-skill/references/new.md":
+			return testResponse(http.StatusOK, "new\n"), nil
+		case "https://raw.githubusercontent.com/acme/skills/main/folder-skill/scripts/run.sh":
+			return testResponse(http.StatusOK, "echo new\n"), nil
+		default:
+			t.Fatalf("unexpected request: %s", r.URL.String())
+			return nil, nil
+		}
+	})}
+
+	_, status, changes, err := refreshImportedSkill(ctx, db, client, admin, "admin", "folder-skill", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "update available" {
+		t.Fatalf("status = %q, want update available", status)
+	}
+	got := make([]string, 0, len(changes))
+	for _, change := range changes {
+		got = append(got, change.Status+" "+change.Path)
+	}
+	want := []string{"modified SKILL.md", "added references/new.md", "removed references/old.md", "modified scripts/run.sh"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("changes = %#v, want %#v", got, want)
+	}
+}
+
 func TestSearchAgentSkills(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.String() != "https://agentskill.sh/api/agent/search?limit=2&q=code+review" {
@@ -208,10 +434,16 @@ func TestImportSkillInputsFromGitHubRoot(t *testing.T) {
 			return testResponse(http.StatusOK, `[{"name":"workflow","path":"workflow","type":"dir"},{"name":"notes","path":"notes","type":"dir"}]`), nil
 		case "https://api.github.com/repos/acme/skills/contents/workflow/SKILL.md":
 			return testResponse(http.StatusOK, `{"name":"SKILL.md","path":"workflow/SKILL.md","type":"file","download_url":"https://raw.githubusercontent.com/acme/skills/main/workflow/SKILL.md","html_url":"https://github.com/acme/skills/blob/main/workflow/SKILL.md"}`), nil
+		case "https://api.github.com/repos/acme/skills/contents/workflow":
+			return testResponse(http.StatusOK, `[{"name":"SKILL.md","path":"workflow/SKILL.md","type":"file","download_url":"https://raw.githubusercontent.com/acme/skills/main/workflow/SKILL.md"},{"name":"references","path":"workflow/references","type":"dir"}]`), nil
+		case "https://api.github.com/repos/acme/skills/contents/workflow/references":
+			return testResponse(http.StatusOK, `[{"name":"guide.md","path":"workflow/references/guide.md","type":"file","download_url":"https://raw.githubusercontent.com/acme/skills/main/workflow/references/guide.md"}]`), nil
 		case "https://api.github.com/repos/acme/skills/contents/notes/SKILL.md":
 			return testResponse(http.StatusNotFound, `{"message":"Not Found"}`), nil
 		case "https://raw.githubusercontent.com/acme/skills/main/workflow/SKILL.md":
 			return testResponse(http.StatusOK, "---\nname: workflow\ndescription: Use when planning work.\n---\n\n# Workflow\n"), nil
+		case "https://raw.githubusercontent.com/acme/skills/main/workflow/references/guide.md":
+			return testResponse(http.StatusOK, "# Guide\n"), nil
 		default:
 			t.Fatalf("unexpected request: %s", r.URL.String())
 			return nil, nil
@@ -230,6 +462,9 @@ func TestImportSkillInputsFromGitHubRoot(t *testing.T) {
 	}
 	if inputs[0].SourceProvider != "github" || inputs[0].SourceURL != "https://github.com/acme/skills/blob/main/workflow/SKILL.md" {
 		t.Fatalf("unexpected source: %s %s", inputs[0].SourceProvider, inputs[0].SourceURL)
+	}
+	if len(inputs[0].Files) != 1 || inputs[0].Files[0].Path != "references/guide.md" || inputs[0].Files[0].Content != "# Guide\n" {
+		t.Fatalf("unexpected supporting files: %#v", inputs[0].Files)
 	}
 }
 

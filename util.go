@@ -4,9 +4,11 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html"
 	"net/http"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -38,6 +40,18 @@ func nowUTC() time.Time {
 func sha256String(b []byte) string {
 	sum := sha256.Sum256(b)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func apiTokenHash(token string) string {
+	return sha256String([]byte(strings.TrimSpace(token)))
+}
+
+func tokenPreview(token string) string {
+	token = strings.TrimSpace(token)
+	if len(token) <= 18 {
+		return token
+	}
+	return token[:12] + "..." + token[len(token)-6:]
 }
 
 func parseTime(s string) time.Time {
@@ -73,6 +87,24 @@ func parseIdentifier(id string) (string, string, error) {
 		return "", "", fmt.Errorf("identifier must be owner/slug")
 	}
 	return parts[0], parts[1], nil
+}
+
+func validateSkillFilePath(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("file path is required")
+	}
+	if strings.Contains(value, "\\") || path.IsAbs(value) {
+		return fmt.Errorf("file path %q must be relative", value)
+	}
+	clean := path.Clean(value)
+	if clean != value || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
+		return fmt.Errorf("file path %q must not contain traversal", value)
+	}
+	if strings.HasPrefix(clean, ".git/") || clean == ".git" {
+		return fmt.Errorf("file path %q is not allowed", value)
+	}
+	return nil
 }
 
 func renderSkillMarkdown(in SkillInput) string {

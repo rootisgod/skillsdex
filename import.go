@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -10,11 +12,13 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 )
 
 const maxImportedSkillBytes = 1 << 20
+const maxSkillsDexExportBytes = 16 << 20
 
 var errGitHubNotFound = errors.New("github content not found")
 
@@ -75,11 +79,172 @@ type agentSkillSearchResult struct {
 	ContentQualityScore2 *int   `json:"content_quality_score"`
 }
 
+type restoredSkillInput struct {
+	Input    SkillInput
+	Archived bool
+}
+
 func importSkillInputs(ctx context.Context, client httpDoer, source, owner string) ([]SkillInput, error) {
 	if _, err := parseAgentSkillSource(source); err == nil {
 		return importSkillInputsFromAgentSkill(ctx, client, source, owner)
 	}
 	return importSkillInputsFromGitHub(ctx, client, source, owner)
+}
+
+func importSkillInputsFromSkillsDexExport(data []byte, owner string) ([]restoredSkillInput, error) {
+	if len(data) == 0 {
+		return nil, errors.New("backup upload is empty")
+	}
+	if len(data) > maxSkillsDexExportBytes {
+		return nil, fmt.Errorf("backup upload is too large; limit is %d MB", maxSkillsDexExportBytes/(1<<20))
+	}
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, errors.New("invalid SkillsDex backup zip")
+	}
+	files := map[string]*zip.File{}
+	for _, f := range zr.File {
+		files[f.Name] = f
+	}
+	manifestFile := files["skillsdex-export.json"]
+	if manifestFile == nil {
+		return nil, errors.New("backup is missing skillsdex-export.json")
+	}
+	manifestBytes, err := readZipFileLimited(manifestFile, maxImportedSkillBytes)
+	if err != nil {
+		return nil, err
+	}
+	var manifest exportManifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		return nil, errors.New("backup manifest is invalid")
+	}
+	seen := map[string]bool{}
+	var restored []restoredSkillInput
+	for _, meta := range manifest.Skills {
+		if err := validateExportSkillPath(meta.Path); err != nil {
+			return nil, fmt.Errorf("%s: %w", meta.Path, err)
+		}
+		_, slug, err := parseIdentifier(meta.Identifier)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", meta.Identifier, err)
+		}
+		if err := validateSlug("slug", slug); err != nil {
+			return nil, fmt.Errorf("%s: %w", meta.Identifier, err)
+		}
+		if seen[slug] {
+			return nil, fmt.Errorf("backup contains duplicate skill slug %q", slug)
+		}
+		seen[slug] = true
+		skillFile := files[meta.Path]
+		if skillFile == nil {
+			return nil, fmt.Errorf("backup is missing %s", meta.Path)
+		}
+		raw, err := readZipFileLimited(skillFile, maxImportedSkillBytes)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", meta.Path, err)
+		}
+		in := skillInputFromRawMarkdown(string(raw), owner, slug, meta.Description)
+		in.Owner = owner
+		in.Slug = slug
+		if strings.TrimSpace(meta.Name) != "" {
+			in.Name = meta.Name
+		}
+		if strings.TrimSpace(meta.Description) != "" {
+			in.Description = meta.Description
+		}
+		if strings.TrimSpace(meta.ShortDescription) != "" {
+			in.ShortDescription = meta.ShortDescription
+		}
+		in.RecommendedDefault = meta.RecommendedDefault
+		in.PinnedInstall = meta.PinnedInstall
+		in.SourceProvider = meta.SourceProvider
+		in.SourceURL = meta.SourceURL
+		in.SourceExplicit = true
+		supporting, err := supportingFilesFromBackup(files, meta.Path)
+		if err != nil {
+			return nil, err
+		}
+		in.Files = supporting
+		restored = append(restored, restoredSkillInput{Input: in, Archived: meta.Archived})
+	}
+	return restored, nil
+}
+
+func supportingFilesFromBackup(files map[string]*zip.File, skillPath string) ([]SkillFile, error) {
+	dir := path.Dir(skillPath)
+	prefix := ""
+	if dir != "." {
+		prefix = dir + "/"
+	}
+	var paths []string
+	for name, f := range files {
+		if name == "skillsdex-export.json" || f.FileInfo().IsDir() || name == skillPath {
+			continue
+		}
+		if prefix != "" {
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			name = strings.TrimPrefix(name, prefix)
+		}
+		if name == "" || name == "SKILL.md" {
+			continue
+		}
+		if err := validateSkillFilePath(name); err != nil {
+			return nil, err
+		}
+		paths = append(paths, name)
+	}
+	sort.Strings(paths)
+	var out []SkillFile
+	for _, rel := range paths {
+		full := rel
+		if prefix != "" {
+			full = prefix + rel
+		}
+		raw, err := readZipFileLimited(files[full], maxImportedSkillBytes)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", full, err)
+		}
+		out = append(out, SkillFile{Path: rel, Content: string(raw), ContentType: contentTypeForPath(rel)})
+	}
+	return out, nil
+}
+
+func validateExportSkillPath(value string) error {
+	if value == "" {
+		return errors.New("backup skill path is empty")
+	}
+	if strings.Contains(value, "\\") || path.IsAbs(value) {
+		return errors.New("backup skill path must be relative")
+	}
+	clean := path.Clean(value)
+	if clean != value || clean == "." || strings.HasPrefix(clean, "../") || clean == ".." || strings.Contains(clean, "/../") {
+		return errors.New("backup skill path must not contain traversal")
+	}
+	if path.Base(clean) != "SKILL.md" {
+		return errors.New("backup skill path must point to SKILL.md")
+	}
+	return nil
+}
+
+func readZipFileLimited(f *zip.File, limit int64) ([]byte, error) {
+	if f.UncompressedSize64 > uint64(limit) {
+		return nil, fmt.Errorf("%s is too large", f.Name)
+	}
+	rc, err := f.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(io.LimitReader(rc, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("%s is too large", f.Name)
+	}
+	return data, nil
 }
 
 func importSkillInputsFromGitHub(ctx context.Context, client httpDoer, sourceURL, owner string) ([]SkillInput, error) {
@@ -104,7 +269,12 @@ func importSkillInputsFromGitHub(ctx context.Context, client httpDoer, sourceURL
 			return nil, err
 		}
 		fallback := strings.TrimSuffix(path.Base(path.Dir(source.Path)), path.Ext(path.Dir(source.Path)))
-		skills = append(skills, withSource(skillInputFromRawMarkdown(raw, owner, fallback, "Imported from GitHub."), "github", firstNonEmpty(sourceHTMLURL, sourceURL)))
+		in := skillInputFromRawMarkdown(raw, owner, fallback, "Imported from GitHub.")
+		in.Files, err = fetchGitHubSupportingFiles(ctx, client, source, path.Dir(source.Path))
+		if err != nil {
+			return nil, err
+		}
+		skills = append(skills, withSource(in, "github", firstNonEmpty(sourceHTMLURL, sourceURL)))
 		return skills, nil
 	}
 
@@ -116,7 +286,12 @@ func importSkillInputsFromGitHub(ctx context.Context, client httpDoer, sourceURL
 			}
 			return nil, err
 		}
-		skills = append(skills, withSource(skillInputFromRawMarkdown(raw, owner, path.Base(source.Path), "Imported from GitHub."), "github", firstNonEmpty(sourceHTMLURL, sourceURL)))
+		in := skillInputFromRawMarkdown(raw, owner, path.Base(source.Path), "Imported from GitHub.")
+		in.Files, err = fetchGitHubSupportingFiles(ctx, client, source, source.Path)
+		if err != nil {
+			return nil, err
+		}
+		skills = append(skills, withSource(in, "github", firstNonEmpty(sourceHTMLURL, sourceURL)))
 		return skills, nil
 	}
 
@@ -142,7 +317,12 @@ func importSkillInputsFromGitHub(ctx context.Context, client httpDoer, sourceURL
 			if err != nil {
 				return nil, err
 			}
-			skills = append(skills, withSource(skillInputFromRawMarkdown(raw, owner, entry.Name, "Imported from GitHub."), "github", firstNonEmpty(entry.HTMLURL, sourceHTMLURL, sourceURL)))
+			in := skillInputFromRawMarkdown(raw, owner, entry.Name, "Imported from GitHub.")
+			in.Files, err = fetchGitHubSupportingFiles(ctx, client, source, entry.Path)
+			if err != nil {
+				return nil, err
+			}
+			skills = append(skills, withSource(in, "github", firstNonEmpty(entry.HTMLURL, sourceHTMLURL, sourceURL)))
 		}
 	}
 	return skills, nil
@@ -269,11 +449,11 @@ func upsertImportedSkill(ctx context.Context, db *sql.DB, user *User, in SkillIn
 		if existing.ArchivedAt != "" {
 			return nil, "", errors.New("archived skills cannot be imported")
 		}
-		raw, _, err := rawSkill(ctx, db, user.ID, in.Owner, in.Slug)
+		files, _, err := currentSkillFiles(ctx, db, user.ID, in.Owner, in.Slug)
 		if err != nil {
 			return nil, "", err
 		}
-		if string(raw) == renderSkillMarkdown(in) {
+		if skillInputMatchesFiles(in, files) {
 			updated, err := updateSkillSource(ctx, db, user.ID, in.Owner, in.Slug, in)
 			return updated, "unchanged", err
 		}
@@ -286,6 +466,137 @@ func upsertImportedSkill(ctx context.Context, db *sql.DB, user *User, in SkillIn
 	}
 	created, err := createSkill(ctx, db, user, in)
 	return created, "created", err
+}
+
+func refreshImportedSkill(ctx context.Context, db *sql.DB, client httpDoer, user *User, owner, slug string, dryRun bool) (*Skill, string, []SourceRefreshChange, error) {
+	current, err := getSkill(ctx, db, user.ID, owner, slug)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	if current.SourceURL == "" {
+		return nil, "", nil, errors.New("skill has no source URL")
+	}
+	inputs, err := importSkillInputs(ctx, client, current.SourceURL, user.Username)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	var next *SkillInput
+	for i := range inputs {
+		if inputs[i].Slug == current.Slug {
+			next = &inputs[i]
+			break
+		}
+	}
+	if next == nil && len(inputs) == 1 {
+		next = &inputs[0]
+	}
+	if next == nil {
+		return nil, "", nil, errors.New("source did not return a matching skill")
+	}
+	next.Owner = current.OwnerSlug
+	next.Slug = current.Slug
+	next.RecommendedDefault = current.RecommendedDefault
+	next.PinnedInstall = current.PinnedInstall
+	next.SourceExplicit = true
+
+	files, _, err := currentSkillFiles(ctx, db, user.ID, owner, slug)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	nextFiles, _, err := normalizedSkillFiles(*next)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	changes := sourceRefreshChanges(files, nextFiles)
+	if len(changes) == 0 {
+		if dryRun {
+			return current, "already current", nil, nil
+		}
+		updated, err := updateSkillSource(ctx, db, user.ID, owner, slug, *next)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		return updated, "already current", nil, nil
+	}
+	if dryRun {
+		return current, "update available", changes, nil
+	}
+	updated, err := updateSkill(ctx, db, user, owner, slug, *next)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	return updated, "updated from source", changes, nil
+}
+
+func sourceRefreshChanges(current, next []SkillFile) []SourceRefreshChange {
+	currentByPath := map[string]SkillFile{}
+	nextByPath := map[string]SkillFile{}
+	paths := map[string]bool{}
+	for _, file := range current {
+		currentByPath[file.Path] = file
+		paths[file.Path] = true
+	}
+	for _, file := range next {
+		nextByPath[file.Path] = file
+		paths[file.Path] = true
+	}
+	var sorted []string
+	for path := range paths {
+		sorted = append(sorted, path)
+	}
+	sort.Strings(sorted)
+	var changes []SourceRefreshChange
+	for _, path := range sorted {
+		currentFile, hasCurrent := currentByPath[path]
+		nextFile, hasNext := nextByPath[path]
+		switch {
+		case !hasCurrent && hasNext:
+			changes = append(changes, SourceRefreshChange{Path: path, Status: "added", Diff: refreshChangeDiff(currentFile, nextFile, hasCurrent, hasNext)})
+		case hasCurrent && !hasNext:
+			changes = append(changes, SourceRefreshChange{Path: path, Status: "removed", Diff: refreshChangeDiff(currentFile, nextFile, hasCurrent, hasNext)})
+		case currentFile.Content != nextFile.Content || currentFile.Executable != nextFile.Executable || currentFile.ContentType != nextFile.ContentType:
+			changes = append(changes, SourceRefreshChange{Path: path, Status: "modified", Diff: refreshChangeDiff(currentFile, nextFile, hasCurrent, hasNext)})
+		}
+	}
+	return changes
+}
+
+func refreshChangeDiff(currentFile, nextFile SkillFile, hasCurrent, hasNext bool) string {
+	oldContent := currentFile.Content
+	newContent := nextFile.Content
+	if hasCurrent && !hasNext {
+		newContent = ""
+	}
+	if !hasCurrent && hasNext {
+		oldContent = ""
+	}
+	if oldContent != newContent {
+		return unifiedDiff(oldContent, newContent)
+	}
+	if hasCurrent && hasNext && currentFile.Executable != nextFile.Executable {
+		mode := "non-executable"
+		if nextFile.Executable {
+			mode = "executable"
+		}
+		return "+ mode: " + mode + "\n"
+	}
+	if hasCurrent && hasNext && currentFile.ContentType != nextFile.ContentType {
+		return "- content-type: " + currentFile.ContentType + "\n+ content-type: " + nextFile.ContentType + "\n"
+	}
+	return ""
+}
+
+func skillInputMatchesFiles(in SkillInput, files []SkillFile) bool {
+	expected, _, err := normalizedSkillFiles(in)
+	if err != nil || len(expected) != len(files) {
+		return false
+	}
+	for i := range expected {
+		if expected[i].Path != files[i].Path || expected[i].Content != files[i].Content || expected[i].Executable != files[i].Executable {
+			return false
+		}
+	}
+	return true
 }
 
 func withSource(in SkillInput, provider, sourceURL string) SkillInput {
@@ -379,6 +690,64 @@ func fetchGitHubDirectory(ctx context.Context, client httpDoer, source githubSou
 		return nil, errors.New("GitHub path is not a directory")
 	}
 	return entries, nil
+}
+
+func fetchGitHubSupportingFiles(ctx context.Context, client httpDoer, source githubSource, skillDir string) ([]SkillFile, error) {
+	if skillDir == "." || strings.TrimSpace(skillDir) == "" {
+		skillDir = ""
+	}
+	var out []SkillFile
+	total := 0
+	var walk func(string) error
+	walk = func(dir string) error {
+		entries, err := fetchGitHubDirectory(ctx, client, source, dir)
+		if errors.Is(err, errGitHubNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if len(out) >= 200 {
+				return errors.New("GitHub skill folder has too many files")
+			}
+			switch entry.Type {
+			case "dir":
+				if err := walk(entry.Path); err != nil {
+					return err
+				}
+			case "file":
+				rel := strings.TrimPrefix(entry.Path, strings.Trim(skillDir, "/")+"/")
+				if skillDir == "" {
+					rel = entry.Path
+				}
+				if rel == "SKILL.md" {
+					continue
+				}
+				if err := validateSkillFilePath(rel); err != nil {
+					return err
+				}
+				if entry.DownloadURL == "" {
+					continue
+				}
+				raw, err := fetchGitHubRaw(ctx, client, entry.DownloadURL)
+				if err != nil {
+					return err
+				}
+				total += len([]byte(raw))
+				if total > maxSkillsDexExportBytes {
+					return errors.New("GitHub skill folder is too large")
+				}
+				out = append(out, SkillFile{Path: rel, Content: raw, ContentType: contentTypeForPath(rel)})
+			}
+		}
+		return nil
+	}
+	if err := walk(skillDir); err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out, nil
 }
 
 func fetchGitHubFile(ctx context.Context, client httpDoer, source githubSource, contentPath string) (string, string, error) {

@@ -1,0 +1,27 @@
+[Unit]
+Description=SkillsDex web app and API
+Documentation=https://github.com/iain/skillsdex
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=skillsdex
+Environment=SKILLSDEX_HOME=/var/lib/skillsdex
+ExecStart=/usr/local/bin/skillsdex serve --addr 127.0.0.1:8765 --db /var/lib/skillsdex/skillsdex.db
+Restart=on-failure
+RestartSec=5s
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/skillsdex
+RestrictSUIDSGID=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target
