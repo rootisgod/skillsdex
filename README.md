@@ -332,6 +332,8 @@ The release task writes platform archives under `dist/` and a `dist/SHA256SUMS` 
 cd dist && shasum -a 256 -c SHA256SUMS
 ```
 
+GitHub Actions also creates an automatic release for each push to `main`. The workflow tags releases as `v0.<run_number>` and uploads `skillsdex-darwin-amd64`, `skillsdex-linux-amd64`, `skillsdex-windows-amd64.exe`, plus matching `.sha256` files.
+
 Generate a Homebrew formula from the same release artifacts:
 
 ```bash
