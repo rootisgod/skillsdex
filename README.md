@@ -107,7 +107,9 @@ List available skills:
 ./skillsdex lint --json --strict --file ~/.codex/skills/admin--five-advisor-review/SKILL.md
 ```
 
-Skills can be tagged with lightweight lowercase labels such as `go`, `python`, `testing`, or `security`; tags are for list filtering only. Use the web skill list tag chips or `skills --tag <tag>` to narrow results.
+Skills can be tagged with lightweight lowercase labels such as `go`, `python`, `testing`, or `security`. Tags are edited on the web skill form, shown on list/detail pages, included in API JSON, and preserved in SkillsDex backup export/restore. Use the web skill list tag chips, `GET /v1/skills?tag=<tag>`, or `skills --tag <tag>` to narrow list results.
+
+Tags are filtering-only metadata. They do not install, sync, pin, recommend, trust, or group skills; use pinned installs, recommended defaults, and named install sets for those behaviors.
 
 `show --file` prints one stored package file, including supporting files from full skill folders, without the metadata summary.
 
