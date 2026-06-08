@@ -153,6 +153,12 @@ sudo install -m 0644 deploy/skillsdex.service /etc/systemd/system/skillsdex.serv
 sudo systemctl daemon-reload
 ```
 
+Or use the Taskfile helper:
+
+```bash
+task prod:install-service
+```
+
 Start the app on loopback only:
 
 ```bash
@@ -168,6 +174,18 @@ sudo -u skillsdex /usr/local/bin/skillsdex admin reset-password \
   --username admin \
   --password '<new-long-password>'
 sudo systemctl start skillsdex
+```
+
+Or use:
+
+```bash
+task prod:reset-admin-password
+```
+
+For non-interactive use:
+
+```bash
+PASSWORD='<new-long-password>' task prod:reset-admin-password
 ```
 
 Install and configure Caddy outside this project. Use `deploy/Caddyfile` as the starting point, replacing `skills.example.com` with the production hostname. Caddy should proxy to `127.0.0.1:8765`.
@@ -189,6 +207,12 @@ Inspect SkillsDex logs:
 
 ```bash
 sudo journalctl -u skillsdex -f
+```
+
+Or:
+
+```bash
+task prod:logs
 ```
 
 Inspect Caddy logs using the host's Caddy packaging defaults, commonly:
@@ -254,6 +278,13 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now skillsdex-backup.timer
 ```
 
+Or:
+
+```bash
+task prod:install-backup-timer
+task prod:backup-now
+```
+
 Keep copies off-host. At minimum, verify that the backup file exists and is non-empty:
 
 ```bash
@@ -306,11 +337,29 @@ sudo systemctl restart skillsdex
 sudo systemctl status skillsdex --no-pager
 ```
 
+Or:
+
+```bash
+task prod:restart
+```
+
 Check logs and the web login page. If the upgrade fails:
 
 ```bash
 sudo install -m 0755 /usr/local/bin/skillsdex.previous /usr/local/bin/skillsdex
 sudo systemctl restart skillsdex
+```
+
+Production task shortcuts:
+
+```bash
+task prod:install-service
+task prod:status
+task prod:logs
+task prod:reset-admin-password
+task prod:install-backup-timer
+task prod:backup-now
+task prod:caddyfile-check
 ```
 
 ### Account Recovery

@@ -289,6 +289,17 @@ sudo systemctl enable --now skillsdex
 
 The unit binds to `127.0.0.1:8765`, stores data in `/var/lib/skillsdex`, and trusts only loopback proxy headers so Caddy can pass the real client IP and HTTPS state.
 
+If you use Task, the same service path has shortcuts:
+
+```bash
+task prod:install-service
+task prod:reset-admin-password
+task prod:status
+task prod:logs
+task prod:install-backup-timer
+task prod:backup-now
+```
+
 For internet-facing production, use the production plan in [PRODUCTION.md](PRODUCTION.md). The recommended default is Caddy in front of the systemd service:
 
 ```text

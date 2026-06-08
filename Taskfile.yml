@@ -57,6 +57,76 @@ tasks:
     cmds:
       - docker build -t skillsdex:local .
 
+  prod:build:
+    desc: Build the production Linux binary for this host
+    cmds:
+      - go build -trimpath -ldflags="-s -w" -o skillsdex .
+
+  prod:install-service:
+    desc: Install the SkillsDex systemd service and binary
+    cmds:
+      - task prod:build
+      - |
+        set -eu
+        id -u skillsdex >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/skillsdex --shell /usr/sbin/nologin skillsdex
+        sudo install -m 0755 skillsdex /usr/local/bin/skillsdex
+        sudo install -m 0644 deploy/skillsdex.service /etc/systemd/system/skillsdex.service
+        sudo systemctl daemon-reload
+        sudo systemctl enable --now skillsdex
+        sudo systemctl status skillsdex --no-pager
+
+  prod:restart:
+    desc: Restart the production SkillsDex service
+    cmds:
+      - sudo systemctl restart skillsdex
+      - sudo systemctl status skillsdex --no-pager
+
+  prod:status:
+    desc: Show production SkillsDex service status
+    cmds:
+      - sudo systemctl status skillsdex --no-pager
+
+  prod:logs:
+    desc: Follow production SkillsDex service logs
+    cmds:
+      - sudo journalctl -u skillsdex -f
+
+  prod:reset-admin-password:
+    desc: Reset the admin password using the production database
+    cmds:
+      - |
+        set -eu
+        sudo systemctl stop skillsdex
+        if [ -n "${PASSWORD:-}" ]; then
+          sudo -u skillsdex /usr/local/bin/skillsdex admin reset-password --db /var/lib/skillsdex/skillsdex.db --username "${USERNAME:-admin}" --password "$PASSWORD"
+        else
+          sudo -u skillsdex /usr/local/bin/skillsdex admin reset-password --db /var/lib/skillsdex/skillsdex.db --username "${USERNAME:-admin}"
+        fi
+        sudo systemctl start skillsdex
+
+  prod:install-backup-timer:
+    desc: Install and enable the daily SkillsDex SQLite backup timer
+    cmds:
+      - |
+        set -eu
+        sudo install -m 0755 deploy/skillsdex-backup.sh /usr/local/bin/skillsdex-backup
+        sudo install -m 0644 deploy/skillsdex-backup.service /etc/systemd/system/skillsdex-backup.service
+        sudo install -m 0644 deploy/skillsdex-backup.timer /etc/systemd/system/skillsdex-backup.timer
+        sudo systemctl daemon-reload
+        sudo systemctl enable --now skillsdex-backup.timer
+        sudo systemctl status skillsdex-backup.timer --no-pager
+
+  prod:backup-now:
+    desc: Run the SkillsDex SQLite backup service once
+    cmds:
+      - sudo systemctl start skillsdex-backup.service
+      - sudo systemctl status skillsdex-backup.service --no-pager
+
+  prod:caddyfile-check:
+    desc: Validate the example Caddyfile if caddy is installed
+    cmds:
+      - caddy validate --config deploy/Caddyfile
+
   launch:
     desc: Build, start, and open the SkillsDex website
     cmds:
