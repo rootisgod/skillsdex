@@ -77,6 +77,11 @@ type setupPlanReport struct {
 	NextSteps    []string `json:"next_steps"`
 }
 
+type skillsOptions struct {
+	JSON bool
+	Tag  string
+}
+
 type publishOptions struct {
 	Path    string
 	Slug    string
@@ -424,9 +429,9 @@ func runConfig(args []string) error {
 }
 
 func runSkills(args []string) error {
-	jsonOutput, err := parseSkillsArgs(args)
+	opts, err := parseSkillsArgs(args)
 	if err != nil {
-		return errors.New("usage: skillsdex skills [--json]")
+		return errors.New("usage: skillsdex skills [--tag TAG] [--json]")
 	}
 	client, err := authenticatedClient()
 	if err != nil {
@@ -435,16 +440,20 @@ func runSkills(args []string) error {
 	var resp struct {
 		Skills []Skill `json:"skills"`
 	}
-	if err := client.getJSON("/v1/skills", &resp); err != nil {
+	path := "/v1/skills"
+	if opts.Tag != "" {
+		path += "?tag=" + url.QueryEscape(opts.Tag)
+	}
+	if err := client.getJSON(path, &resp); err != nil {
 		return err
 	}
-	if jsonOutput {
+	if opts.JSON {
 		return printJSON(resp)
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "IDENTIFIER\tNAME\tREVISION\tUPDATED")
+	fmt.Fprintln(tw, "IDENTIFIER\tNAME\tTAGS\tREVISION\tUPDATED")
 	for _, s := range resp.Skills {
-		fmt.Fprintf(tw, "%s/%s\t%s\t%d\t%s\n", s.OwnerSlug, s.Slug, s.Name, s.RevisionNumber, s.UpdatedAt.Format("2006-01-02 15:04"))
+		fmt.Fprintf(tw, "%s/%s\t%s\t%s\t%d\t%s\n", s.OwnerSlug, s.Slug, s.Name, tagsText(s.Tags), s.RevisionNumber, s.UpdatedAt.Format("2006-01-02 15:04"))
 	}
 	return tw.Flush()
 }
@@ -1906,6 +1915,8 @@ func skillInputFromResponse(resp skillResponse) SkillInput {
 		PinnedInstall:      resp.Skill.PinnedInstall,
 		SourceProvider:     resp.Skill.SourceProvider,
 		SourceURL:          resp.Skill.SourceURL,
+		Tags:               resp.Skill.Tags,
+		TagsExplicit:       true,
 		Body:               bodyFromSkillMarkdown(resp.Raw),
 		Files:              supportingFilesOnly(resp.Files),
 	}
@@ -4053,20 +4064,34 @@ func parseInstalledArgs(args []string) (installedOptions, error) {
 	return opts, nil
 }
 
-func parseSkillsArgs(args []string) (bool, error) {
-	jsonOutput := false
-	for _, arg := range args {
-		switch arg {
-		case "--json":
-			jsonOutput = true
+func parseSkillsArgs(args []string) (skillsOptions, error) {
+	var opts skillsOptions
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			opts.JSON = true
+		case arg == "--tag":
+			if i+1 >= len(args) {
+				return skillsOptions{}, errors.New("missing tag")
+			}
+			opts.Tag = strings.ToLower(strings.TrimSpace(args[i+1]))
+			i++
+		case strings.HasPrefix(arg, "--tag="):
+			opts.Tag = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(arg, "--tag=")))
 		default:
 			if strings.HasPrefix(arg, "-") {
-				return false, fmt.Errorf("unknown flag %s", arg)
+				return skillsOptions{}, fmt.Errorf("unknown flag %s", arg)
 			}
-			return false, errors.New("skills does not accept positional arguments")
+			return skillsOptions{}, errors.New("skills does not accept positional arguments")
 		}
 	}
-	return jsonOutput, nil
+	if opts.Tag != "" {
+		if err := validateTagSlug(opts.Tag); err != nil {
+			return skillsOptions{}, err
+		}
+	}
+	return opts, nil
 }
 
 func parseSetsArgs(args []string) (setsOptions, error) {

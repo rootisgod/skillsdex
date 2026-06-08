@@ -26,6 +26,7 @@ type Skill struct {
 	PinnedInstall      bool      `json:"pinned_install"`
 	SourceProvider     string    `json:"source_provider,omitempty"`
 	SourceURL          string    `json:"source_url,omitempty"`
+	Tags               []string  `json:"tags,omitempty"`
 	CurrentRevisionID  string    `json:"latest_revision"`
 	RevisionNumber     int       `json:"revision_number"`
 	ArchivedAt         string    `json:"archived_at,omitempty"`
@@ -114,17 +115,19 @@ type RetentionStats struct {
 }
 
 type SkillInput struct {
-	Owner              string `json:"owner"`
-	Slug               string `json:"slug"`
-	Name               string `json:"name"`
-	Description        string `json:"description"`
-	ShortDescription   string `json:"short_description"`
-	RecommendedDefault bool   `json:"recommended_default"`
-	PinnedInstall      bool   `json:"pinned_install"`
-	SourceProvider     string `json:"source_provider,omitempty"`
-	SourceURL          string `json:"source_url,omitempty"`
-	SourceExplicit     bool   `json:"-"`
-	Body               string `json:"body"`
+	Owner              string   `json:"owner"`
+	Slug               string   `json:"slug"`
+	Name               string   `json:"name"`
+	Description        string   `json:"description"`
+	ShortDescription   string   `json:"short_description"`
+	RecommendedDefault bool     `json:"recommended_default"`
+	PinnedInstall      bool     `json:"pinned_install"`
+	SourceProvider     string   `json:"source_provider,omitempty"`
+	SourceURL          string   `json:"source_url,omitempty"`
+	SourceExplicit     bool     `json:"-"`
+	Tags               []string `json:"tags"`
+	TagsExplicit       bool     `json:"-"`
+	Body               string   `json:"body"`
 	Files              []SkillFile
 }
 

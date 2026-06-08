@@ -155,6 +155,8 @@ func importSkillInputsFromSkillsDexExport(data []byte, owner string) ([]restored
 		if strings.TrimSpace(meta.ShortDescription) != "" {
 			in.ShortDescription = meta.ShortDescription
 		}
+		in.Tags = meta.Tags
+		in.TagsExplicit = true
 		in.RecommendedDefault = meta.RecommendedDefault
 		in.PinnedInstall = meta.PinnedInstall
 		in.SourceProvider = meta.SourceProvider
@@ -454,6 +456,11 @@ func upsertImportedSkill(ctx context.Context, db *sql.DB, user *User, in SkillIn
 			return nil, "", err
 		}
 		if skillInputMatchesFiles(in, files) {
+			if in.TagsExplicit {
+				if err := updateSkillTags(ctx, db, user.ID, existing.ID, in.Tags); err != nil {
+					return nil, "", err
+				}
+			}
 			updated, err := updateSkillSource(ctx, db, user.ID, in.Owner, in.Slug, in)
 			return updated, "unchanged", err
 		}

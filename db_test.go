@@ -148,6 +148,90 @@ func TestInstallSetsAreScopedAndValidateMembership(t *testing.T) {
 	}
 }
 
+func TestSkillTagsPersistAndFilterOnlyLists(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tagged, err := createSkill(ctx, db, admin, SkillInput{
+		Owner:       "admin",
+		Slug:        "go-review",
+		Name:        "Go Review",
+		Description: "Use when reviewing Go code.",
+		Tags:        []string{"testing", "go", "go"},
+		Body:        "# Go Review\n\nReview Go code.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(tagged.Tags, ","); got != "go,testing" {
+		t.Fatalf("created tags = %q, want go,testing", got)
+	}
+	if _, err := createSkill(ctx, db, admin, SkillInput{
+		Owner:       "admin",
+		Slug:        "python-review",
+		Name:        "Python Review",
+		Description: "Use when reviewing Python code.",
+		Tags:        []string{"python"},
+		Body:        "# Python Review\n\nReview Python code.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	goSkills, err := listSkillsFiltered(ctx, db, admin.ID, false, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(goSkills) != 1 || goSkills[0].Slug != "go-review" {
+		t.Fatalf("go filtered skills = %#v", goSkills)
+	}
+	if _, err := getSkill(ctx, db, admin.ID, "admin", "python-review"); err != nil {
+		t.Fatalf("tag filter should not affect direct skill lookup: %v", err)
+	}
+
+	if _, err := updateSkill(ctx, db, admin, "admin", "go-review", SkillInput{
+		Owner:       "admin",
+		Slug:        "go-review",
+		Name:        "Go Review",
+		Description: "Use when reviewing Go code.",
+		Body:        "# Go Review\n\nUpdated.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	preserved, err := getSkill(ctx, db, admin.ID, "admin", "go-review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(preserved.Tags, ","); got != "go,testing" {
+		t.Fatalf("implicit update tags = %q, want preserved tags", got)
+	}
+
+	if _, err := updateSkill(ctx, db, admin, "admin", "go-review", SkillInput{
+		Owner:        "admin",
+		Slug:         "go-review",
+		Name:         "Go Review",
+		Description:  "Use when reviewing Go code.",
+		Tags:         []string{},
+		TagsExplicit: true,
+		Body:         "# Go Review\n\nUpdated again.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := getSkill(ctx, db, admin.ID, "admin", "go-review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cleared.Tags) != 0 {
+		t.Fatalf("explicit empty tags should clear tags: %#v", cleared.Tags)
+	}
+}
+
 func TestAPITokensAreStoredHashedAndPreviewed(t *testing.T) {
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
 	if err != nil {

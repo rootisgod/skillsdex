@@ -80,6 +80,28 @@ func validateSlug(kind, value string) error {
 	return nil
 }
 
+func parseTagList(raw string) []string {
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\t' || r == ' '
+	})
+	tags := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.ToLower(strings.TrimSpace(part))
+		if part != "" {
+			tags = append(tags, part)
+		}
+	}
+	normalized, err := normalizeTags(tags)
+	if err != nil {
+		return tags
+	}
+	return normalized
+}
+
+func tagsText(tags []string) string {
+	return strings.Join(tags, ", ")
+}
+
 func parseIdentifier(id string) (string, string, error) {
 	parts := strings.Split(id, "/")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {

@@ -94,6 +94,7 @@ List available skills:
 ```bash
 ./skillsdex skills
 ./skillsdex skills --json
+./skillsdex skills --tag testing
 ./skillsdex show admin/five-advisor-review
 ./skillsdex show admin/five-advisor-review --file references/guide.md
 ./skillsdex show admin/five-advisor-review --raw
@@ -105,6 +106,8 @@ List available skills:
 ./skillsdex lint --file ~/.codex/skills/admin--five-advisor-review/SKILL.md
 ./skillsdex lint --json --strict --file ~/.codex/skills/admin--five-advisor-review/SKILL.md
 ```
+
+Skills can be tagged with lightweight lowercase labels such as `go`, `python`, `testing`, or `security`; tags are for list filtering only. Use the web skill list tag chips or `skills --tag <tag>` to narrow results.
 
 `show --file` prints one stored package file, including supporting files from full skill folders, without the metadata summary.
 

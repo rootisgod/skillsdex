@@ -902,6 +902,72 @@ func TestSkillAPIIncludesSupportingFiles(t *testing.T) {
 	}
 }
 
+func TestSkillAPIListsAndFiltersTags(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := createSkill(ctx, db, admin, SkillInput{
+		Owner:       "admin",
+		Slug:        "go-review",
+		Name:        "Go Review",
+		Description: "Use when reviewing Go code.",
+		Tags:        []string{"go", "testing"},
+		Body:        "# Go Review\n\nReview Go code.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := createSkill(ctx, db, admin, SkillInput{
+		Owner:       "admin",
+		Slug:        "python-review",
+		Name:        "Python Review",
+		Description: "Use when reviewing Python code.",
+		Tags:        []string{"python"},
+		Body:        "# Python Review\n\nReview Python code.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	token, err := createAPIToken(ctx, db, admin.ID, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a := &app{db: db}
+	mux := http.NewServeMux()
+	a.routes(mux)
+	req := httptest.NewRequest(http.MethodGet, "/v1/skills?tag=go", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("api skills tag filter = %d: %s", w.Code, w.Body.String())
+	}
+	var payload struct {
+		Skills []Skill `json:"skills"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Skills) != 1 || payload.Skills[0].Slug != "go-review" || strings.Join(payload.Skills[0].Tags, ",") != "go,testing" {
+		t.Fatalf("unexpected filtered skills payload: %#v", payload)
+	}
+
+	badReq := httptest.NewRequest(http.MethodGet, "/v1/skills?tag=bad_tag", nil)
+	badReq.Header.Set("Authorization", "Bearer "+token)
+	badW := httptest.NewRecorder()
+	mux.ServeHTTP(badW, badReq)
+	if badW.Code != http.StatusBadRequest {
+		t.Fatalf("invalid tag filter status = %d, want 400", badW.Code)
+	}
+}
+
 func TestSkillExportDumpsOwnedSkills(t *testing.T) {
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
 	if err != nil {
@@ -922,6 +988,7 @@ func TestSkillExportDumpsOwnedSkills(t *testing.T) {
 		SourceProvider: "github",
 		SourceURL:      "https://github.com/acme/skills/tree/main/exported-skill",
 		SourceExplicit: true,
+		Tags:           []string{"go", "testing"},
 		Body:           "# Exported Skill\n\nInstructions.",
 		Files:          []SkillFile{{Path: "references/guide.md", Content: "# Guide\n"}},
 	}); err != nil {
@@ -1001,7 +1068,7 @@ func TestSkillExportDumpsOwnedSkills(t *testing.T) {
 	for _, skill := range manifest.Skills {
 		if skill.Identifier == "admin/exported-skill" {
 			found = true
-			if !skill.Archived || skill.SourceProvider != "github" || skill.SourceURL == "" || skill.Path != "admin--exported-skill/SKILL.md" {
+			if !skill.Archived || skill.SourceProvider != "github" || skill.SourceURL == "" || skill.Path != "admin--exported-skill/SKILL.md" || strings.Join(skill.Tags, ",") != "go,testing" {
 				t.Fatalf("unexpected manifest skill: %#v", skill)
 			}
 		}
@@ -1289,6 +1356,7 @@ func TestSkillImportRestoresSkillsDexExport(t *testing.T) {
 		SourceProvider:     "github",
 		SourceURL:          "https://github.com/example/skills/tree/main/backup-skill",
 		SourceExplicit:     true,
+		Tags:               []string{"backup", "testing"},
 		Body:               "# Backup Skill\n\nRestore this from a zip.",
 		Files:              []SkillFile{{Path: "references/restore.md", Content: "# Restore\n"}},
 	}); err != nil {
@@ -1333,7 +1401,7 @@ func TestSkillImportRestoresSkillsDexExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restored.Name != "Backup Skill" || !restored.RecommendedDefault || !restored.PinnedInstall || restored.SourceProvider != "github" || restored.SourceURL == "" || restored.ArchivedAt == "" {
+	if restored.Name != "Backup Skill" || !restored.RecommendedDefault || !restored.PinnedInstall || restored.SourceProvider != "github" || restored.SourceURL == "" || restored.ArchivedAt == "" || strings.Join(restored.Tags, ",") != "backup,testing" {
 		t.Fatalf("unexpected restored skill: %#v", restored)
 	}
 	raw, _, err := rawSkill(ctx, db, restoreUser.ID, "restore", "backup-skill")

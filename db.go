@@ -120,6 +120,19 @@ func migrate(db *sql.DB) error {
 			position INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY(set_id, skill_id)
 		);`,
+		`CREATE TABLE IF NOT EXISTS tags (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			slug TEXT NOT NULL,
+			name TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			UNIQUE(user_id, slug)
+		);`,
+		`CREATE TABLE IF NOT EXISTS skill_tags (
+			skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+			tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+			PRIMARY KEY(skill_id, tag_id)
+		);`,
 		`CREATE TABLE IF NOT EXISTS audit_events (
 			id TEXT PRIMARY KEY,
 			actor_user_id TEXT REFERENCES users(id),
@@ -137,6 +150,8 @@ func migrate(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_revisions_skill ON skill_revisions(skill_id, revision_number);`,
 		`CREATE INDEX IF NOT EXISTS idx_install_sets_user ON install_sets(user_id, updated_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_install_set_skills_set ON install_set_skills(set_id, position);`,
+		`CREATE INDEX IF NOT EXISTS idx_tags_user_slug ON tags(user_id, slug);`,
+		`CREATE INDEX IF NOT EXISTS idx_skill_tags_tag ON skill_tags(tag_id, skill_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_events_created ON audit_events(created_at DESC);`,
 	}
 	for _, stmt := range stmts {
@@ -1015,12 +1030,28 @@ func listInstallSetSkills(ctx context.Context, db *sql.DB, userID, slug string) 
 }
 
 func listSkills(ctx context.Context, db *sql.DB, userID string, includeArchived bool) ([]Skill, error) {
+	return listSkillsFiltered(ctx, db, userID, includeArchived, "")
+}
+
+func listSkillsFiltered(ctx context.Context, db *sql.DB, userID string, includeArchived bool, tag string) ([]Skill, error) {
+	tag = strings.TrimSpace(tag)
 	q := `SELECT s.id, s.owner_type, s.owner_id, s.owner_slug, s.slug, s.name, s.description, COALESCE(s.short_description,''), s.recommended_default, s.pinned_install, COALESCE(s.source_provider,''), COALESCE(s.source_url,''), COALESCE(s.current_revision_id,''), COALESCE(r.revision_number,0), COALESCE(s.archived_at,''), s.created_at, s.updated_at
 		FROM skills s LEFT JOIN skill_revisions r ON r.id = s.current_revision_id
 		WHERE s.owner_id = ?`
 	args := []any{userID}
 	if !includeArchived {
 		q += ` AND s.archived_at IS NULL`
+	}
+	if tag != "" {
+		if err := validateTagSlug(tag); err != nil {
+			return nil, err
+		}
+		q += ` AND EXISTS (
+			SELECT 1 FROM skill_tags st
+			JOIN tags t ON t.id = st.tag_id
+			WHERE st.skill_id = s.id AND t.user_id = ? AND t.slug = ?
+		)`
+		args = append(args, userID, tag)
 	}
 	q += ` ORDER BY s.updated_at DESC`
 	rows, err := db.QueryContext(ctx, q, args...)
@@ -1036,14 +1067,28 @@ func listSkills(ctx context.Context, db *sql.DB, userID string, includeArchived 
 		}
 		skills = append(skills, *s)
 	}
-	return skills, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := hydrateSkillTags(ctx, db, userID, skills); err != nil {
+		return nil, err
+	}
+	return skills, nil
 }
 
 func getSkill(ctx context.Context, db *sql.DB, userID, owner, slug string) (*Skill, error) {
 	row := db.QueryRowContext(ctx, `SELECT s.id, s.owner_type, s.owner_id, s.owner_slug, s.slug, s.name, s.description, COALESCE(s.short_description,''), s.recommended_default, s.pinned_install, COALESCE(s.source_provider,''), COALESCE(s.source_url,''), COALESCE(s.current_revision_id,''), COALESCE(r.revision_number,0), COALESCE(s.archived_at,''), s.created_at, s.updated_at
 		FROM skills s LEFT JOIN skill_revisions r ON r.id = s.current_revision_id
 		WHERE s.owner_id = ? AND s.owner_slug = ? AND s.slug = ?`, userID, owner, slug)
-	return scanSkill(row)
+	s, err := scanSkill(row)
+	if err != nil {
+		return nil, err
+	}
+	s.Tags, err = skillTags(ctx, db, userID, s.ID)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 func scanSkill(row scanner) (*Skill, error) {
@@ -1077,6 +1122,9 @@ func createSkill(ctx context.Context, db *sql.DB, user *User, in SkillInput) (*S
 	sourceProvider, sourceURL := normalizedSource(in)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO skills (id, owner_type, owner_id, owner_slug, slug, name, description, short_description, recommended_default, pinned_install, source_provider, source_url, created_at, updated_at) VALUES (?, 'user', ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
 		skillID, user.ID, user.Username, in.Slug, strings.TrimSpace(in.Name), strings.TrimSpace(in.Description), strings.TrimSpace(in.ShortDescription), boolInt(in.RecommendedDefault), boolInt(in.PinnedInstall), sourceProvider, sourceURL, now, now); err != nil {
+		return nil, err
+	}
+	if err := setSkillTagsTx(ctx, tx, user.ID, skillID, in.Tags); err != nil {
 		return nil, err
 	}
 	revID, err := insertRevision(ctx, tx, skillID, 1, user.ID, in)
@@ -1126,6 +1174,11 @@ func updateSkill(ctx context.Context, db *sql.DB, user *User, owner, slug string
 	if err != nil {
 		return nil, err
 	}
+	if in.TagsExplicit || in.Tags != nil {
+		if err := setSkillTagsTx(ctx, tx, user.ID, s.ID, in.Tags); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -1166,6 +1219,138 @@ func updateSkillSource(ctx context.Context, db *sql.DB, userID, owner, slug stri
 
 func normalizedSource(in SkillInput) (string, string) {
 	return strings.TrimSpace(in.SourceProvider), strings.TrimSpace(in.SourceURL)
+}
+
+func normalizeTags(tags []string) ([]string, error) {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		tag = strings.ToLower(strings.TrimSpace(tag))
+		if tag == "" {
+			continue
+		}
+		if err := validateTagSlug(tag); err != nil {
+			return nil, err
+		}
+		if seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		out = append(out, tag)
+	}
+	sort.Strings(out)
+	if len(out) > 12 {
+		return nil, errors.New("a skill can have at most 12 tags")
+	}
+	return out, nil
+}
+
+func validateTagSlug(tag string) error {
+	if err := validateSlug("tag", tag); err != nil {
+		return err
+	}
+	if len(tag) > 32 {
+		return errors.New("tag must be 32 characters or fewer")
+	}
+	return nil
+}
+
+func setSkillTagsTx(ctx context.Context, tx *sql.Tx, userID, skillID string, tags []string) error {
+	normalized, err := normalizeTags(tags)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM skill_tags WHERE skill_id = ?`, skillID); err != nil {
+		return err
+	}
+	now := nowUTC().Format(time.RFC3339)
+	for _, tag := range normalized {
+		tagID := ""
+		err := tx.QueryRowContext(ctx, `SELECT id FROM tags WHERE user_id = ? AND slug = ?`, userID, tag).Scan(&tagID)
+		if err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			tagID = newID("tag")
+			if _, err := tx.ExecContext(ctx, `INSERT INTO tags (id, user_id, slug, name, created_at) VALUES (?, ?, ?, ?, ?)`, tagID, userID, tag, tag, now); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO skill_tags (skill_id, tag_id) VALUES (?, ?)`, skillID, tagID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func updateSkillTags(ctx context.Context, db *sql.DB, userID, skillID string, tags []string) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := setSkillTagsTx(ctx, tx, userID, skillID, tags); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func skillTags(ctx context.Context, db *sql.DB, userID, skillID string) ([]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT t.slug
+		FROM tags t
+		JOIN skill_tags st ON st.tag_id = t.id
+		WHERE t.user_id = ? AND st.skill_id = ?
+		ORDER BY t.slug`, userID, skillID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tags []string
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err != nil {
+			return nil, err
+		}
+		tags = append(tags, tag)
+	}
+	return tags, rows.Err()
+}
+
+func hydrateSkillTags(ctx context.Context, db *sql.DB, userID string, skills []Skill) error {
+	if len(skills) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(skills))
+	byID := map[string]int{}
+	for i, skill := range skills {
+		ids = append(ids, skill.ID)
+		byID[skill.ID] = i
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, userID)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := db.QueryContext(ctx, `SELECT st.skill_id, t.slug
+		FROM skill_tags st
+		JOIN tags t ON t.id = st.tag_id
+		WHERE t.user_id = ? AND st.skill_id IN (`+placeholders+`)
+		ORDER BY t.slug`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var skillID, tag string
+		if err := rows.Scan(&skillID, &tag); err != nil {
+			return err
+		}
+		if idx, ok := byID[skillID]; ok {
+			skills[idx].Tags = append(skills[idx].Tags, tag)
+		}
+	}
+	return rows.Err()
 }
 
 func insertRevision(ctx context.Context, tx *sql.Tx, skillID string, number int, userID string, in SkillInput) (string, error) {

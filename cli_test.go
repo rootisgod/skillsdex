@@ -1991,7 +1991,14 @@ func TestRunSkillsListsSkillsAsTextAndJSON(t *testing.T) {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"skills":[{"id":"skl_1","owner":"admin","slug":"review","name":"Review","description":"Use when reviewing.","latest_revision":"rev_1","revision_number":3,"created_at":"2026-06-08T00:00:00Z","updated_at":"2026-06-08T01:00:00Z"}]}`))
+		if r.URL.Query().Get("tag") == "testing" {
+			_, _ = w.Write([]byte(`{"skills":[{"id":"skl_1","owner":"admin","slug":"review","name":"Review","description":"Use when reviewing.","tags":["review","testing"],"latest_revision":"rev_1","revision_number":3,"created_at":"2026-06-08T00:00:00Z","updated_at":"2026-06-08T01:00:00Z"}]}`))
+			return
+		}
+		if r.URL.RawQuery != "" {
+			t.Fatalf("unexpected skills query %s", r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`{"skills":[{"id":"skl_1","owner":"admin","slug":"review","name":"Review","description":"Use when reviewing.","tags":["review","testing"],"latest_revision":"rev_1","revision_number":3,"created_at":"2026-06-08T00:00:00Z","updated_at":"2026-06-08T01:00:00Z"}]}`))
 	}))
 	defer server.Close()
 	if err := saveAuth(AuthConfig{ServerURL: server.URL, Token: "test-token"}); err != nil {
@@ -2004,7 +2011,7 @@ func TestRunSkillsListsSkillsAsTextAndJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"IDENTIFIER", "admin/review", "Review", "3"} {
+	for _, want := range []string{"IDENTIFIER", "TAGS", "admin/review", "Review", "review, testing", "3"} {
 		if !strings.Contains(textOut, want) {
 			t.Fatalf("skills output missing %q:\n%s", want, textOut)
 		}
@@ -2022,11 +2029,20 @@ func TestRunSkillsListsSkillsAsTextAndJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(jsonOut), &resp); err != nil {
 		t.Fatalf("skills json did not decode: %v\n%s", err, jsonOut)
 	}
-	if len(resp.Skills) != 1 || resp.Skills[0].OwnerSlug != "admin" || resp.Skills[0].Slug != "review" {
+	if len(resp.Skills) != 1 || resp.Skills[0].OwnerSlug != "admin" || resp.Skills[0].Slug != "review" || strings.Join(resp.Skills[0].Tags, ",") != "review,testing" {
 		t.Fatalf("unexpected skills json: %#v", resp)
 	}
-	if requests != 2 {
-		t.Fatalf("requests = %d, want 2", requests)
+	tagOut, err := captureStdout(t, func() error {
+		return runSkills([]string{"--tag", "testing"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(tagOut, "admin/review") || !strings.Contains(tagOut, "review, testing") {
+		t.Fatalf("skills --tag output missing filtered skill:\n%s", tagOut)
+	}
+	if requests != 3 {
+		t.Fatalf("requests = %d, want 3", requests)
 	}
 	if err := runSkills([]string{"admin/review"}); err == nil {
 		t.Fatal("expected positional skills arg to fail")

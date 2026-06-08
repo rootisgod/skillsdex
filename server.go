@@ -672,12 +672,24 @@ func (a *app) handleSkills(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	skills, err := listSkills(r.Context(), a.db, u.ID, r.URL.Query().Get("archived") == "1")
+	selectedTag := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("tag")))
+	if selectedTag != "" {
+		if err := validateTagSlug(selectedTag); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	skills, err := listSkillsFiltered(r.Context(), a.db, u.ID, r.URL.Query().Get("archived") == "1", selectedTag)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	a.render(w, r, u, "Skills", skillsPage(skills, r.URL.Query().Get("archived") == "1"))
+	allSkills, err := listSkills(r.Context(), a.db, u.ID, r.URL.Query().Get("archived") == "1")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	a.render(w, r, u, "Skills", skillsPage(skills, allSkills, r.URL.Query().Get("archived") == "1", selectedTag))
 }
 
 func (a *app) handleSkillRoute(w http.ResponseWriter, r *http.Request) {
@@ -926,17 +938,18 @@ type exportManifest struct {
 }
 
 type exportSkillMeta struct {
-	Identifier         string `json:"identifier"`
-	Name               string `json:"name"`
-	Description        string `json:"description"`
-	ShortDescription   string `json:"short_description,omitempty"`
-	RevisionNumber     int    `json:"revision_number"`
-	Archived           bool   `json:"archived"`
-	RecommendedDefault bool   `json:"recommended_default"`
-	PinnedInstall      bool   `json:"pinned_install"`
-	SourceProvider     string `json:"source_provider,omitempty"`
-	SourceURL          string `json:"source_url,omitempty"`
-	Path               string `json:"path"`
+	Identifier         string   `json:"identifier"`
+	Name               string   `json:"name"`
+	Description        string   `json:"description"`
+	ShortDescription   string   `json:"short_description,omitempty"`
+	Tags               []string `json:"tags,omitempty"`
+	RevisionNumber     int      `json:"revision_number"`
+	Archived           bool     `json:"archived"`
+	RecommendedDefault bool     `json:"recommended_default"`
+	PinnedInstall      bool     `json:"pinned_install"`
+	SourceProvider     string   `json:"source_provider,omitempty"`
+	SourceURL          string   `json:"source_url,omitempty"`
+	Path               string   `json:"path"`
 }
 
 func buildSkillsExport(ctx context.Context, db *sql.DB, u *User) ([]byte, error) {
@@ -971,6 +984,7 @@ func buildSkillsExport(ctx context.Context, db *sql.DB, u *User) ([]byte, error)
 			Name:               s.Name,
 			Description:        s.Description,
 			ShortDescription:   s.ShortDescription,
+			Tags:               s.Tags,
 			RevisionNumber:     s.RevisionNumber,
 			Archived:           s.ArchivedAt != "",
 			RecommendedDefault: s.RecommendedDefault,
@@ -1097,7 +1111,7 @@ func (a *app) handleSkillEdit(w http.ResponseWriter, r *http.Request, u *User, o
 		http.NotFound(w, r)
 		return
 	}
-	in := SkillInput{Owner: owner, Slug: slug, Name: s.Name, Description: s.Description, ShortDescription: s.ShortDescription, RecommendedDefault: s.RecommendedDefault, PinnedInstall: s.PinnedInstall, SourceProvider: s.SourceProvider, SourceURL: s.SourceURL, Body: bodyFromSkillMarkdown(string(raw))}
+	in := SkillInput{Owner: owner, Slug: slug, Name: s.Name, Description: s.Description, ShortDescription: s.ShortDescription, RecommendedDefault: s.RecommendedDefault, PinnedInstall: s.PinnedInstall, SourceProvider: s.SourceProvider, SourceURL: s.SourceURL, Tags: s.Tags, TagsExplicit: true, Body: bodyFromSkillMarkdown(string(raw))}
 	currentFiles, _, filesErr := currentSkillFiles(r.Context(), a.db, u.ID, owner, slug)
 	if filesErr == nil {
 		in.Files = supportingFilesOnly(currentFiles)
@@ -1258,6 +1272,8 @@ func skillInputFromForm(r *http.Request, defaultOwner string) SkillInput {
 		SourceProvider:     strings.TrimSpace(r.FormValue("source_provider")),
 		SourceURL:          strings.TrimSpace(r.FormValue("source_url")),
 		SourceExplicit:     true,
+		Tags:               parseTagList(r.FormValue("tags")),
+		TagsExplicit:       true,
 		Body:               strings.TrimRight(r.FormValue("body"), "\r\n"),
 	}
 	in.Files = skillFilesFromForm(r)
@@ -1386,7 +1402,14 @@ func (a *app) handleAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if path == "skills" && r.Method == http.MethodGet {
-		skills, err := listSkills(r.Context(), a.db, u.ID, false)
+		tag := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("tag")))
+		if tag != "" {
+			if err := validateTagSlug(tag); err != nil {
+				writeJSONError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		}
+		skills, err := listSkillsFiltered(r.Context(), a.db, u.ID, false, tag)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -2059,7 +2082,7 @@ skillsdex install-set ` + html.EscapeString(set.Slug) + `</pre></div><div class=
 	return template.HTML(b.String())
 }
 
-func skillsPage(skills []Skill, archived bool) template.HTML {
+func skillsPage(skills, allSkills []Skill, archived bool, selectedTag string) template.HTML {
 	var b strings.Builder
 	active := 0
 	archivedCount := 0
@@ -2070,6 +2093,7 @@ func skillsPage(skills []Skill, archived bool) template.HTML {
 			active++
 		}
 	}
+	tagOptions := skillTagOptions(allSkills)
 	b.WriteString(`<header class="pagehead hero-head"><div><p class="eyebrow">Library</p><h1>Skills</h1><p>Browse, import, revise, and install reusable agent workflows.</p><div class="metrics"><span><strong>` + fmt.Sprintf("%d", active) + `</strong> active</span><span><strong>` + fmt.Sprintf("%d", archivedCount) + `</strong> archived</span></div></div><div class="actions"><a class="button" href="/skills/new">` + iconLabel("plus", "New Skill") + `</a> `)
 	b.WriteString(`<a class="button secondary" href="/skills/import">` + iconLabel("import", "Import") + `</a> `)
 	b.WriteString(`<a class="button secondary" href="/skills/top">` + iconLabel("spark", "Top Skills") + `</a> `)
@@ -2080,9 +2104,29 @@ func skillsPage(skills []Skill, archived bool) template.HTML {
 	} else {
 		b.WriteString(`<a class="button ghost" href="/skills?archived=1">` + iconLabel("archive", "Show archived") + `</a>`)
 	}
-	b.WriteString(`</div><div class="page-art skills-art" aria-hidden="true"><span class="art-node">SKILL.md</span><span class="art-node">sync</span><span class="art-node">codex</span></div></header><div class="split wide"><section class="surface data-surface"><table><thead><tr><th>Identifier</th><th>Name</th><th>Revision</th><th>Updated</th><th>Status</th></tr></thead><tbody>`)
+	b.WriteString(`</div><div class="page-art skills-art" aria-hidden="true"><span class="art-node">SKILL.md</span><span class="art-node">sync</span><span class="art-node">codex</span></div></header>`)
+	if len(tagOptions) > 0 {
+		b.WriteString(`<nav class="tag-filter" aria-label="Tag filter"><a class="pill`)
+		if selectedTag == "" {
+			b.WriteString(` active`)
+		}
+		b.WriteString(`" href="` + html.EscapeString(skillsURL(archived, "")) + `">all</a>`)
+		for _, tag := range tagOptions {
+			b.WriteString(`<a class="pill`)
+			if tag == selectedTag {
+				b.WriteString(` active`)
+			}
+			b.WriteString(`" href="` + html.EscapeString(skillsURL(archived, tag)) + `">` + html.EscapeString(tag) + `</a>`)
+		}
+		b.WriteString(`</nav>`)
+	}
+	b.WriteString(`<div class="split wide"><section class="surface data-surface"><table><thead><tr><th>Identifier</th><th>Name</th><th>Revision</th><th>Updated</th><th>Status</th></tr></thead><tbody>`)
 	if len(skills) == 0 {
-		b.WriteString(`<tr><td colspan="5"><div class="empty"><strong>No skills yet.</strong><br><a href="/skills/new">Create the first skill</a></div></td></tr>`)
+		msg := `No skills yet.`
+		if selectedTag != "" {
+			msg = `No skills match tag ` + html.EscapeString(selectedTag) + `.`
+		}
+		b.WriteString(`<tr><td colspan="5"><div class="empty"><strong>` + msg + `</strong><br><a href="/skills/new">Create the first skill</a></div></td></tr>`)
 	}
 	for _, s := range skills {
 		status := "active"
@@ -2100,10 +2144,64 @@ func skillsPage(skills []Skill, archived bool) template.HTML {
 		if s.SourceProvider != "" {
 			b.WriteString(`<div class="row-tags"><span class="pill source">` + html.EscapeString(sourceProviderLabel(s.SourceProvider)) + `</span></div>`)
 		}
+		if len(s.Tags) > 0 {
+			b.WriteString(`<div class="row-tags">`)
+			for _, tag := range s.Tags {
+				b.WriteString(`<a class="pill" href="` + html.EscapeString(skillsURL(archived, tag)) + `">` + html.EscapeString(tag) + `</a>`)
+			}
+			b.WriteString(`</div>`)
+		}
 		b.WriteString(`</td><td><span class="rev">r` + fmt.Sprintf("%d", s.RevisionNumber) + `</span></td><td>` + s.UpdatedAt.Format("2006-01-02 15:04") + `</td><td><span class="pill ` + status + `">` + status + `</span></td></tr>`)
 	}
 	b.WriteString(`</tbody></table></section><aside class="panel sticky"><div class="panel-head"><div class="panel-icon">` + icon("bolt") + `</div><div><h2>Install Skills</h2><p>Run the CLI from a new machine after login.</p></div></div><div class="command-card"><span>Default target</span><pre>skillsdex config set default_target codex</pre></div><div class="command-card"><span>Named install set</span><pre>skillsdex install-set laptop</pre></div><div class="command-card"><span>Pinned install set</span><pre>skillsdex install-pinned</pre></div><div class="command-card"><span>Recommended defaults</span><pre>skillsdex install-defaults</pre></div><div class="command-card"><span>Single skill</span><pre>skillsdex install admin/five-advisor-review</pre></div><div class="command-card"><span>Sync managed installs</span><pre>skillsdex sync --dry-run --strict</pre></div></aside></div>`)
 	return template.HTML(b.String())
+}
+
+func skillTagOptions(skills []Skill) []string {
+	seen := map[string]bool{}
+	var tags []string
+	for _, skill := range skills {
+		for _, tag := range skill.Tags {
+			if tag == "" || seen[tag] {
+				continue
+			}
+			seen[tag] = true
+			tags = append(tags, tag)
+		}
+	}
+	sort.Strings(tags)
+	return tags
+}
+
+func skillsURL(archived bool, tag string) string {
+	values := url.Values{}
+	if archived {
+		values.Set("archived", "1")
+	}
+	if tag != "" {
+		values.Set("tag", tag)
+	}
+	if encoded := values.Encode(); encoded != "" {
+		return "/skills?" + encoded
+	}
+	return "/skills"
+}
+
+func tagsHTML(tags []string, linked bool, archived bool) string {
+	if len(tags) == 0 {
+		return "none"
+	}
+	var b strings.Builder
+	b.WriteString(`<span class="row-tags">`)
+	for _, tag := range tags {
+		if linked {
+			b.WriteString(`<a class="pill" href="` + html.EscapeString(skillsURL(archived, tag)) + `">` + html.EscapeString(tag) + `</a>`)
+		} else {
+			b.WriteString(`<span class="pill">` + html.EscapeString(tag) + `</span>`)
+		}
+	}
+	b.WriteString(`</span>`)
+	return b.String()
 }
 
 type skillImportResult struct {
@@ -2293,6 +2391,7 @@ func skillFormPage(action string, create bool, in SkillInput, msg string) templa
 	b.WriteString(`></label><label>Name <input name="name" value="` + html.EscapeString(in.Name) + `" required data-skill-name></label>
 		<label>Description <textarea name="description" rows="3" required data-skill-description>` + html.EscapeString(in.Description) + `</textarea></label>
 		<label>Short description <input name="short_description" value="` + html.EscapeString(in.ShortDescription) + `" data-skill-short-description></label>
+		<label>Tags <input name="tags" value="` + html.EscapeString(tagsText(in.Tags)) + `" placeholder="go, testing, security"></label>
 		<div class="form-grid"><label>Source provider <input name="source_provider" value="` + html.EscapeString(in.SourceProvider) + `" placeholder="github or agentskill.sh"></label>
 		<label>Source URL <input name="source_url" type="url" value="` + html.EscapeString(in.SourceURL) + `" placeholder="https://github.com/owner/repo/tree/main/skill"></label></div>
 		<label class="check"><input name="recommended_default" type="checkbox"`)
@@ -2382,6 +2481,7 @@ func skillDetailPage(s *Skill, raw string, files []SkillFile, activeSkills []Ski
 		pinned = "yes"
 	}
 	source := sourceMetaHTML(s)
+	tags := tagsHTML(s.Tags, true, false)
 	body := bodyFromSkillMarkdown(raw)
 	quality := skillQualityWithContext(SkillInput{Name: s.Name, Description: s.Description, ShortDescription: s.ShortDescription, Body: body}, SkillQualityContext{
 		CurrentIdentifier: s.OwnerSlug + "/" + s.Slug,
@@ -2391,7 +2491,7 @@ func skillDetailPage(s *Skill, raw string, files []SkillFile, activeSkills []Ski
 		Skills:            activeSkills,
 	})
 	b.WriteString(`<section class="panel skill-install-panel"><div class="panel-head"><div class="panel-icon">` + icon("bolt") + `</div><div><h2>Install</h2><p>Copy this skill into the managed Codex target.</p></div></div><div class="command-card"><span>Codex</span><pre>skillsdex config set default_target codex
-skillsdex install ` + html.EscapeString(id) + `</pre></div><div class="meta-list detail-meta"><div><span>Name</span><strong>` + html.EscapeString(s.Name) + `</strong></div><div><span>Short description</span><strong>` + html.EscapeString(s.ShortDescription) + `</strong></div>` + source + `<div><span>Pinned install</span><strong>` + pinned + `</strong></div><div><span>Recommended default</span><strong>` + recommended + `</strong></div></div></section><section class="panel quality-section">` + qualityPanelHTML(quality) + `</section><section class="rendered skill-body">` + simpleMarkdownHTML(body) + `</section>`)
+skillsdex install ` + html.EscapeString(id) + `</pre></div><div class="meta-list detail-meta"><div><span>Name</span><strong>` + html.EscapeString(s.Name) + `</strong></div><div><span>Short description</span><strong>` + html.EscapeString(s.ShortDescription) + `</strong></div>` + source + `<div><span>Tags</span><strong>` + tags + `</strong></div><div><span>Pinned install</span><strong>` + pinned + `</strong></div><div><span>Recommended default</span><strong>` + recommended + `</strong></div></div></section><section class="panel quality-section">` + qualityPanelHTML(quality) + `</section><section class="rendered skill-body">` + simpleMarkdownHTML(body) + `</section>`)
 	if len(files) > 0 {
 		b.WriteString(`<section class="panel"><div class="panel-head compact"><div class="panel-icon">` + icon("layers") + `</div><div><h2>Supporting Files</h2><p>Installed beside <code>SKILL.md</code>.</p></div></div><div class="file-list">`)
 		for _, file := range files {
@@ -3076,6 +3176,8 @@ code { background: var(--soft); border: 1px solid var(--soft-border); border-rad
 .mini { padding: 14px; }
 .muted { color: var(--muted); font-size: 13px; margin-top: 4px; }
 .row-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.tag-filter { display: flex; flex-wrap: wrap; gap: 8px; margin: -10px 0 22px; }
+.tag-filter a { text-decoration: none; }
 .identifier { font-weight: 800; text-decoration: none; }
 .pill, .rev { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--soft-border); background: var(--soft); color: var(--text); font-size: 12px; font-weight: 800; }
 .pill.active { color: var(--ok); background: var(--ok-bg); border-color: var(--ok-line); }
