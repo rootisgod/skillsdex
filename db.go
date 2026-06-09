@@ -24,7 +24,7 @@ func openDB(path string) (*sql.DB, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(`PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;`); err != nil {
+	if err := configureDB(db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -33,6 +33,25 @@ func openDB(path string) (*sql.DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+func configureDB(db *sql.DB) error {
+	if _, err := db.Exec(`
+		PRAGMA foreign_keys = ON;
+		PRAGMA busy_timeout = 5000;
+		PRAGMA synchronous = NORMAL;
+		PRAGMA temp_store = MEMORY;
+	`); err != nil {
+		return err
+	}
+	var journalMode string
+	if err := db.QueryRow(`PRAGMA journal_mode = WAL`).Scan(&journalMode); err != nil {
+		return err
+	}
+	if !strings.EqualFold(journalMode, "wal") {
+		return fmt.Errorf("sqlite journal_mode = %q, want WAL", journalMode)
+	}
+	return nil
 }
 
 func migrate(db *sql.DB) error {

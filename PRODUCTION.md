@@ -139,6 +139,8 @@ Acceptance checks:
 - Caddy is installed and managed separately by the host.
 - Public firewall exposes only TCP 80 and 443.
 - SQLite data lives under `/var/lib/skillsdex`.
+- SQLite runs in WAL mode. Seeing `skillsdex.db-wal` and `skillsdex.db-shm`
+  beside the database while the service is active is expected.
 - Backups are written outside the live data directory, for example `/var/backups/skillsdex`.
 
 ### Initial Install

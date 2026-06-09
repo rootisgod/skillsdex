@@ -10,6 +10,37 @@ import (
 	"time"
 )
 
+func TestOpenDBConfiguresSQLitePragmas(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	assertPragmaInt := func(name string, want int) {
+		t.Helper()
+		var got int
+		if err := db.QueryRow(`PRAGMA ` + name).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("PRAGMA %s = %d, want %d", name, got, want)
+		}
+	}
+
+	var journalMode string
+	if err := db.QueryRow(`PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(journalMode, "wal") {
+		t.Fatalf("PRAGMA journal_mode = %q, want wal", journalMode)
+	}
+	assertPragmaInt("foreign_keys", 1)
+	assertPragmaInt("busy_timeout", 5000)
+	assertPragmaInt("synchronous", 1)
+	assertPragmaInt("temp_store", 2)
+}
+
 func TestDefaultAdminAndTenantScopedSkills(t *testing.T) {
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
 	if err != nil {
