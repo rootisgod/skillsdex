@@ -201,6 +201,75 @@ tasks:
     cmds:
       - caddy validate --config deploy/Caddyfile
 
+  vm:agent-preflight:
+    desc: Check the disposable agent VM over SSH before provisioning
+    cmds:
+      - |
+        set -eu
+        # If preflight reports "sudo: interactive authentication required",
+        # enable passwordless sudo on the VM with:
+        #   sudo visudo -f /etc/sudoers.d/iain-nopasswd
+        #   iain ALL=(ALL) NOPASSWD:ALL
+        remote="${VM_HOST:-iain@192.168.1.45}"
+        key="${VM_SSH_KEY:-$HOME/.ssh/ib_ssh}"
+        ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$remote" 'set -eu
+          hostname
+          uname -a
+          id
+          command -v sudo
+          if sudo -n true 2>/dev/null; then
+            echo "sudo: passwordless"
+          else
+            echo "sudo: interactive authentication required"
+          fi
+          command -v apt-get
+          if [ -r /etc/os-release ]; then . /etc/os-release; printf "%s\n" "$PRETTY_NAME"; fi
+          ss -ltnp 2>/dev/null | sed -n "1,30p" || true
+        '
+
+  vm:provision-agents-dry-run:
+    desc: Preview agent CLI provisioning on the disposable VM
+    cmds:
+      - |
+        set -eu
+        remote="${VM_HOST:-iain@192.168.1.45}"
+        key="${VM_SSH_KEY:-$HOME/.ssh/ib_ssh}"
+        components="${VM_COMPONENTS:-core,codex,claude,opencode,openrouter,agentskill}"
+        scp -i "$key" -q scripts/provision_agent_vm.sh "$remote:/tmp/skillsdex-provision-agent-vm.sh"
+        ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$remote" "bash /tmp/skillsdex-provision-agent-vm.sh --dry-run --components '$components'"
+
+  vm:provision-agents:
+    desc: Install agent CLIs and non-secret provider config on the disposable VM
+    cmds:
+      - |
+        set -eu
+        remote="${VM_HOST:-iain@192.168.1.45}"
+        key="${VM_SSH_KEY:-$HOME/.ssh/ib_ssh}"
+        components="${VM_COMPONENTS:-core,codex,claude,opencode,openrouter,agentskill}"
+        scp -i "$key" -q scripts/provision_agent_vm.sh "$remote:/tmp/skillsdex-provision-agent-vm.sh"
+        ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$remote" "bash /tmp/skillsdex-provision-agent-vm.sh --components '$components'"
+
+  vm:provision-agents-user:
+    desc: Install user-level Codex/OpenRouter pieces on the disposable VM
+    cmds:
+      - |
+        set -eu
+        remote="${VM_HOST:-iain@192.168.1.45}"
+        key="${VM_SSH_KEY:-$HOME/.ssh/ib_ssh}"
+        components="${VM_COMPONENTS:-codex,openrouter}"
+        scp -i "$key" -q scripts/provision_agent_vm.sh "$remote:/tmp/skillsdex-provision-agent-vm.sh"
+        ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$remote" "bash /tmp/skillsdex-provision-agent-vm.sh --components '$components'"
+
+  vm:agent-verify:
+    desc: Verify agent CLI provisioning on the disposable VM
+    cmds:
+      - |
+        set -eu
+        remote="${VM_HOST:-iain@192.168.1.45}"
+        key="${VM_SSH_KEY:-$HOME/.ssh/ib_ssh}"
+        scp -i "$key" -q scripts/provision_agent_vm.sh "$remote:/tmp/skillsdex-provision-agent-vm.sh"
+        ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$remote" 'bash /tmp/skillsdex-provision-agent-vm.sh --verify-only'
+
   launch:
     desc: Build, start, and open the SkillsDex website
     cmds:

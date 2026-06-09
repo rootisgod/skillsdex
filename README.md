@@ -80,6 +80,25 @@ printf '%s\n' "$SKILLSDEX_TOKEN" | ./skillsdex login --server http://127.0.0.1:8
 
 API tokens are shown once when created. After that, the web app stores only a hash and displays a short preview so you can identify and revoke the token later.
 
+Connect a local client to the hosted SkillsDex service:
+
+```bash
+export SKILLSDEX_TOKEN="<token from https://www.skillsdex.org API Tokens>"
+printf '%s\n' "$SKILLSDEX_TOKEN" | skillsdex login --server https://www.skillsdex.org --token-stdin
+skillsdex whoami
+skillsdex config set default_target codex
+skillsdex doctor --fix-permissions
+skillsdex setup
+```
+
+Use the web app at `https://www.skillsdex.org` to log in, open `API Tokens`,
+and create a token before running the CLI login command. Prefer
+`--token-stdin` over `--token <token>` on shared machines because it avoids
+putting the token in shell history. `login` verifies the token against
+`/v1/me`, then stores the server URL and token under the local SkillsDex config
+directory. Run `skillsdex doctor --fix-permissions` after login if the auth,
+manifest, or config files need to be made private.
+
 Invite another user:
 
 ```bash
