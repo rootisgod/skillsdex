@@ -534,6 +534,8 @@ A single SQLite database is expected to be sufficient for the early multi-tenant
 - multiple app servers needing concurrent writes
 - tenant isolation or compliance requirements that SQLite cannot satisfy
 
+The app configures SQLite in WAL mode on startup, with `synchronous=NORMAL`, a busy timeout, foreign key enforcement, and in-memory temp storage. Production backups should use SQLite's online backup API or CLI `.backup` command and store the copied database in a compressed artifact.
+
 Future scaling path:
 
 ```text
@@ -920,13 +922,13 @@ The first useful release is complete when:
 - `skillsdex` is the CLI binary and `skillsdexd` is the server binary.
 - `skillsdexd serve` runs the web app and API.
 - Default server bind address: `127.0.0.1:8765`.
-- Local binary execution is the phase 1 deployment target.
-- Docker should be easy later, but is not part of phase 1.
+- Local binary execution is the development path; the first production path is a systemd service behind external Caddy.
+- Docker should remain easy later, but is not the recommended production path.
 - Web app uses email/password login and session cookies.
 - CLI uses API tokens generated in the web app.
-- API tokens are viewable later in phase 1.
+- API tokens are shown once on creation; stored token material is hashed.
 - First user is `admin` / `admin`, created automatically if no users exist.
-- No forced password change for the default admin account in phase 1.
+- The seeded `admin/admin` account must change its password before normal web use, and public binds are refused while the default password remains active.
 - Admin web UI can create users and set/reset passwords.
 - Admin web UI and CLI can create one-time 24-hour signup invites.
 - Invite creation can optionally email the signup URL when transactional email is configured.
@@ -948,26 +950,14 @@ The first useful release is complete when:
 ## Remaining Open Questions
 
 - Should the CLI cache remote skills even when not installed?
-- Should install support `--yes` in v0 for scripting?
 - How should Windows Codex skill path discovery work if Codex uses a different config directory?
 
-## Recommended Next Step
+## Recommended Next Steps
 
-Build the first implementation in this order:
+1. Dogfood the live service with real Codex skills and capture web UI friction.
+2. Add a disposable real-machine e2e runner for the CLI install/sync/uninstall loop against a pre-authenticated Codex install.
+3. Exercise full-folder authoring against a real Codex install with references, scripts, assets, and templates.
+4. Broaden audit coverage as team-oriented features become concrete.
+5. Revisit phase 2 items such as teams, Windows path discovery, and additional agent targets after the single-user Codex loop has had real use.
 
-1. Create the CLI and server binary skeletons.
-2. Implement `skillsdexd serve`.
-3. Create the SQLite schema and automatic migrations.
-4. Create the default `admin` / `admin` user if no users exist.
-5. Add web auth with sessions.
-6. Build admin user management.
-7. Build the private web skill browser and Markdown editor.
-8. Add generated `SKILL.md` preview, revision history, and revision diffs.
-9. Add API token management.
-10. Add API endpoints backed by the same service and database.
-11. Create CLI config/auth, `doctor`, path discovery, and manifest read/write.
-12. Wire CLI auth and real API calls.
-13. Implement Codex install/sync against the hosted API.
-14. Dogfood with 3-5 personal Codex skills across two machines.
-
-This builds the local hosted workflow first because the web app is the primary skill editing surface. The CLI should then prove that those web-managed skills can be installed and synced into Codex.
+The web app remains the primary skill editing surface. The next validation work should prove that web-managed skills install and sync cleanly into real Codex environments.

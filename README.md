@@ -482,17 +482,19 @@ Current context:
 - API tokens and web session tokens are stored as hashes. API tokens are shown only once. Authenticated web forms use per-session CSRF tokens, including backup uploads, and session cookies are marked `Secure` when served over HTTPS directly or through a configured trusted proxy.
 - Admins can review `Admin > Audit` for recent login, signup invite, password, token, skill, import/export, backup export/restore, install-set, retention, and local recovery changes.
 - Admins can prune expired sessions, revoked API token metadata, old audit events, and old revisions from `Admin > Maintenance`.
+- Production SQLite runs in WAL mode, and the host backup timer creates compressed SQLite backup zips for full-service recovery.
 - systemd, install-script, Docker image build files, checksummed release archives, optional minisign signatures, generated Homebrew formula packaging, and legacy database migration smoke coverage are available for more repeatable local or small-host deployments.
 - The CLI install/sync loop remains the core product path and should stay the main polish target.
 
 Remaining high-level work:
 
-1. Keep expanding the clean-home e2e smoke as new CLI and web flows are added.
-2. Add a disposable real-machine CLI e2e suite for the full install/sync/uninstall loop against a pre-authenticated Codex install.
-3. Continue hosted hardening with broader audit coverage for future team features.
+1. Dogfood the live service and plan the next web UI overhaul from real use.
+2. Keep expanding the clean-home e2e smoke as new CLI and web flows are added.
+3. Add a disposable real-machine CLI e2e suite for the full install/sync/uninstall loop against a pre-authenticated Codex install.
 4. Exercise full-folder authoring against a real Codex install with references, scripts, assets, and templates.
 5. Exercise signed releases and Homebrew packaging in a real GitHub release/tap workflow.
-6. Revisit phase 2 items such as teams and additional agent targets after the single-user install/sync loop has had real use.
+6. Continue hosted hardening with broader audit coverage when future team features become concrete.
+7. Revisit phase 2 items such as teams and additional agent targets after the single-user install/sync loop has had real use.
 
 ## Checks
 

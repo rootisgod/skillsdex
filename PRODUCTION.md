@@ -22,112 +22,21 @@ Use Traefik instead if SkillsDex becomes one service among many container-platfo
 
 For now, avoid Traefik as the default. It is strong for dynamic platforms, but that is unnecessary for one systemd service. Avoid nginx as the default because it usually adds more TLS/certbot configuration than this app needs.
 
-## Production Milestones
+## Production Status
 
-### 1. Safe Bootstrap
+The first single-host production path is implemented and documented:
 
-Goal: a public instance must not be claimable through `admin/admin`.
+- Public traffic terminates at external Caddy on ports 80 and 443.
+- SkillsDex runs as a systemd service on `127.0.0.1:8765`.
+- Public binds are refused while the seeded `admin/admin` password remains active.
+- `skillsdex admin reset-password ...` can recover or rotate an admin password from local shell access.
+- `--trusted-proxy` limits forwarded client IP handling to configured proxy addresses.
+- App security headers are enabled for browser-facing routes.
+- Web session tokens and API tokens are stored as hashes.
+- SQLite runs in WAL mode with `synchronous=NORMAL`, a busy timeout, foreign keys, and in-memory temp storage.
+- Daily SQLite backups are available as compressed zip files, with SkillsDex export zips as an app-level backup and restore-dry-run path.
 
-Implementation tasks:
-
-- Add a startup guard that refuses public binds when the default admin password is still active.
-- Keep local-only first run available on `127.0.0.1`.
-- Add or extend local admin CLI commands so an operator can set the initial admin password before opening the firewall.
-- Document the bootstrap sequence.
-
-Acceptance checks:
-
-- `skillsdexd serve --addr 0.0.0.0:8765` fails when the default admin password is active.
-- `skillsdexd serve --addr 127.0.0.1:8765` still works for local setup.
-- `skillsdex admin reset-password ...` sets a valid password and revokes prior access.
-
-### 2. Reverse Proxy And TLS
-
-Goal: expose only Caddy publicly and keep SkillsDex bound to localhost.
-
-Implementation tasks:
-
-- Ship a Caddyfile example in `deploy/Caddyfile`.
-- Document DNS, firewall, and systemd assumptions.
-- Configure the systemd service with `--trusted-proxy 127.0.0.1` so loopback Caddy can pass `X-Forwarded-Proto` and `X-Forwarded-For`.
-- Keep app-level security headers enabled.
-
-Acceptance checks:
-
-- Public ports: 80 and 443 only.
-- SkillsDex listens on `127.0.0.1:8765`.
-- The systemd unit includes `--trusted-proxy 127.0.0.1`.
-- `curl -I https://example.com` shows HSTS, CSP, frame denial, and no-sniff headers.
-
-### 3. Trusted Proxy Handling
-
-Goal: rate limiting and audit logs should use the real client IP only when the proxy is trusted.
-
-Implementation tasks:
-
-- Add a `--trusted-proxy` config option.
-- Only trust forwarded client-IP headers from configured proxy addresses.
-- Keep `RemoteAddr` as the fallback.
-
-Acceptance checks:
-
-- Direct requests cannot spoof audit/rate-limit IPs through `X-Forwarded-For`.
-- Requests through Caddy can record the actual client IP when configured.
-
-### 4. Session Storage Hardening
-
-Goal: database read access should not expose usable web sessions.
-
-Implementation tasks:
-
-- Store web session token hashes rather than raw session tokens.
-- Migrate existing session rows safely or invalidate them.
-- Keep CSRF tokens separate from session tokens.
-
-Acceptance checks:
-
-- Session lookup works with a presented cookie.
-- Raw cookie values are not stored in `web_sessions`.
-- Existing users can recover by logging in again if old sessions are invalidated.
-
-### 5. Backups And Restore
-
-Goal: production data can be recovered predictably.
-
-Implementation tasks:
-
-- Document SQLite file backup and SkillsDex backup export.
-- Add a backup timer example or script.
-- Document restore and verification steps.
-
-Acceptance checks:
-
-- A backup can be produced without stopping the service.
-- A restore dry run succeeds.
-- A fresh host can be restored from the documented artifacts.
-
-### 6. Operations Runbook
-
-Goal: one operator can safely install, update, recover, and inspect the service.
-
-Implementation tasks:
-
-- Document install, upgrade, rollback, logs, backups, password reset, and account lockout handling.
-- Document post-deploy checks for auth, backups, local DB path, and proxy expectations.
-
-Acceptance checks:
-
-- A new host can be provisioned from the runbook.
-- An admin password loss can be recovered with local shell access.
-- A failed upgrade can be rolled back.
-
-## Initial Implementation Order
-
-1. Add Caddy production docs and example config.
-2. Add the public-bind/default-password guard.
-3. Add trusted proxy configuration.
-4. Hash web session tokens.
-5. Add backup timer/runbook.
+Keep the runbook below current whenever deployment commands, service layout, backup behavior, or recovery steps change.
 
 ## Production Runbook
 
