@@ -477,10 +477,11 @@ Current context:
 Remaining high-level work:
 
 1. Keep expanding the clean-home e2e smoke as new CLI and web flows are added.
-2. Continue hosted hardening with broader audit coverage for future team features.
-3. Exercise full-folder authoring against a real Codex install with references, scripts, assets, and templates.
-4. Exercise signed releases and Homebrew packaging in a real GitHub release/tap workflow.
-5. Revisit phase 2 items such as teams and additional agent targets after the single-user install/sync loop has had real use.
+2. Add a disposable real-machine CLI e2e suite for the full install/sync/uninstall loop against a pre-authenticated Codex install.
+3. Continue hosted hardening with broader audit coverage for future team features.
+4. Exercise full-folder authoring against a real Codex install with references, scripts, assets, and templates.
+5. Exercise signed releases and Homebrew packaging in a real GitHub release/tap workflow.
+6. Revisit phase 2 items such as teams and additional agent targets after the single-user install/sync loop has had real use.
 
 ## Checks
 
@@ -499,6 +500,8 @@ task e2e-first-run
 ```
 
 `task e2e-first-run` starts SkillsDex on `127.0.0.1:18765` with temporary `HOME`, `SKILLSDEX_HOME`, cookies, and SQLite state. It exercises the default login, forced password change, setup page, one-time web token generation, CLI login, `doctor`, `doctor --fix-permissions`, `doctor --strict`, `skills`, `templates`, `mark`, named set setup preview, install dry-runs, `install-defaults`, `installed`, file-level `sync --dry-run` previews, modified-file protection with `--no`/`--yes`, and CLI backup export/inspect/restore dry-runs/restore.
+
+The next CLI confidence step is a disposable real-machine e2e runner. It should require an explicit test-machine marker plus environment variables such as `SKILLSDEX_E2E_SERVER`, `SKILLSDEX_E2E_TOKEN`, and `SKILLSDEX_E2E_ALLOW_WRITES=1`; run only under a dedicated OS user; and exercise `login`, `whoami`, `doctor --strict`, `setup --apply --yes`, install/sync conflict handling, uninstall, publish, backup export/inspect/restore dry-run, and plugin install dry-runs against a real Codex home. Claude and opencode can be preinstalled on that machine, but their real target checks should wait until SkillsDex supports those targets.
 
 `task coverage-critical` checks the critical behavior surfaces named in `TESTING.md` instead of relying on a single flat coverage percentage.
 
