@@ -51,6 +51,10 @@ func sessionTokenHash(token string) string {
 	return sha256String([]byte(strings.TrimSpace(token)))
 }
 
+func inviteTokenHash(token string) string {
+	return sha256String([]byte(strings.TrimSpace(token)))
+}
+
 func tokenPreview(token string) string {
 	token = strings.TrimSpace(token)
 	if len(token) <= 18 {

@@ -2167,6 +2167,86 @@ func TestRunSetsListsAndShowsInstallSets(t *testing.T) {
 	}
 }
 
+func TestRunInvitesListsCreatesAndRevokes(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
+
+	inviteJSON := `{"invite":{"id":"inv_1","token_preview":"sdx_preview...abc123","created_by":"admin","created_at":"2030-06-08T00:00:00Z","expires_at":"2030-06-09T00:00:00Z"},"token":"sdx_fulltoken","url":"https://skillsdex.example/signup?invite=sdx_fulltoken"}`
+	var sawList, sawCreate, sawRevoke bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/invites":
+			sawList = true
+			_, _ = w.Write([]byte(`{"invites":[{"id":"inv_1","token_preview":"sdx_preview...abc123","created_by":"admin","created_at":"2030-06-08T00:00:00Z","expires_at":"2030-06-09T00:00:00Z"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/invites":
+			sawCreate = true
+			_, _ = w.Write([]byte(inviteJSON))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/invites/inv_1/revoke":
+			sawRevoke = true
+			_, _ = w.Write([]byte(`{"invite":{"id":"inv_1","token_preview":"sdx_preview...abc123","created_by":"admin","created_at":"2030-06-08T00:00:00Z","expires_at":"2030-06-09T00:00:00Z","revoked_at":"2030-06-08T01:00:00Z"}}`))
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+	if err := saveAuth(AuthConfig{ServerURL: server.URL, Token: "test-token"}); err != nil {
+		t.Fatal(err)
+	}
+
+	listOut, err := captureStdout(t, func() error {
+		return runInvites(nil)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"ID", "inv_1", "active", "sdx_preview...abc123"} {
+		if !strings.Contains(listOut, want) {
+			t.Fatalf("invites list output missing %q:\n%s", want, listOut)
+		}
+	}
+	createOut, err := captureStdout(t, func() error {
+		return runInvites([]string{"create"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Created invite inv_1", "Signup URL:", "sdx_fulltoken"} {
+		if !strings.Contains(createOut, want) {
+			t.Fatalf("invite create output missing %q:\n%s", want, createOut)
+		}
+	}
+	createJSON, err := captureStdout(t, func() error {
+		return runInvites([]string{"create", "--json"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var created SignupInviteCreateResult
+	if err := json.Unmarshal([]byte(createJSON), &created); err != nil {
+		t.Fatalf("invite create json did not decode: %v\n%s", err, createJSON)
+	}
+	if created.Token != "sdx_fulltoken" || created.Invite.ID != "inv_1" {
+		t.Fatalf("unexpected invite create json: %#v", created)
+	}
+	revokeOut, err := captureStdout(t, func() error {
+		return runInvites([]string{"revoke", "inv_1"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(revokeOut, "Revoked invite inv_1") {
+		t.Fatalf("revoke output missing confirmation:\n%s", revokeOut)
+	}
+	if !sawList || !sawCreate || !sawRevoke {
+		t.Fatalf("expected list/create/revoke requests, saw list=%v create=%v revoke=%v", sawList, sawCreate, sawRevoke)
+	}
+}
+
 func TestRunPluginsTracksListsAndDryRunsInstall(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

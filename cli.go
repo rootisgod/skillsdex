@@ -48,6 +48,10 @@ type installSetsResponse struct {
 	Sets []InstallSet `json:"sets"`
 }
 
+type invitesResponse struct {
+	Invites []SignupInvite `json:"invites"`
+}
+
 type pluginResponse struct {
 	Plugin PluginInstall `json:"plugin"`
 }
@@ -259,6 +263,14 @@ type pluginAddOptions struct {
 type pluginInstallOptions struct {
 	Slug    string
 	Confirm confirmOptions
+}
+
+type invitesOptions struct {
+	JSON bool
+}
+
+type inviteCreateOptions struct {
+	JSON bool
 }
 
 type refreshResponse struct {
@@ -1163,6 +1175,69 @@ func runSets(args []string) error {
 	fmt.Fprintln(tw, "IDENTIFIER\tNAME\tREVISION\tUPDATED")
 	for _, skill := range resp.Skills {
 		fmt.Fprintf(tw, "%s/%s\t%s\t%d\t%s\n", skill.OwnerSlug, skill.Slug, skill.Name, skill.RevisionNumber, skill.UpdatedAt.Format("2006-01-02 15:04"))
+	}
+	return tw.Flush()
+}
+
+func runInvites(args []string) error {
+	if len(args) > 0 {
+		switch args[0] {
+		case "create":
+			opts, err := parseInviteCreateArgs(args[1:])
+			if err != nil {
+				return errors.New("usage: skillsdex invites create [--json]")
+			}
+			client, err := authenticatedClient()
+			if err != nil {
+				return err
+			}
+			var result SignupInviteCreateResult
+			if err := client.postJSON("/v1/invites", map[string]bool{}, &result); err != nil {
+				return err
+			}
+			if opts.JSON {
+				return printJSON(result)
+			}
+			fmt.Printf("Created invite %s, expires %s.\n", result.Invite.ID, result.Invite.ExpiresAt.Format("2006-01-02 15:04"))
+			fmt.Printf("Signup URL: %s\n", result.URL)
+			return nil
+		case "revoke":
+			if len(args) != 2 {
+				return errors.New("usage: skillsdex invites revoke <invite-id>")
+			}
+			client, err := authenticatedClient()
+			if err != nil {
+				return err
+			}
+			var resp struct {
+				Invite SignupInvite `json:"invite"`
+			}
+			if err := client.postJSON("/v1/invites/"+url.PathEscape(strings.TrimSpace(args[1]))+"/revoke", map[string]bool{}, &resp); err != nil {
+				return err
+			}
+			fmt.Printf("Revoked invite %s.\n", resp.Invite.ID)
+			return nil
+		}
+	}
+	opts, err := parseInvitesArgs(args)
+	if err != nil {
+		return errors.New("usage: skillsdex invites [--json] | skillsdex invites create [--json] | skillsdex invites revoke <invite-id>")
+	}
+	client, err := authenticatedClient()
+	if err != nil {
+		return err
+	}
+	var resp invitesResponse
+	if err := client.getJSON("/v1/invites", &resp); err != nil {
+		return err
+	}
+	if opts.JSON {
+		return printJSON(resp)
+	}
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tTOKEN\tSTATUS\tCREATED\tEXPIRES\tUSED_BY")
+	for _, invite := range resp.Invites {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", invite.ID, invite.TokenPreview, signupInviteStatus(invite), invite.CreatedAt.Format("2006-01-02 15:04"), invite.ExpiresAt.Format("2006-01-02 15:04"), valueOrDash(invite.UsedBy))
 	}
 	return tw.Flush()
 }
@@ -4510,6 +4585,32 @@ func parseImportSourceArgs(args []string) (importSourceOptions, error) {
 	}
 	if !opts.Install && (opts.Target != "" || opts.Confirm.DryRun || opts.Confirm.Yes || opts.Confirm.No) {
 		return importSourceOptions{}, errors.New("--target, --dry-run, --yes, and --no require --install")
+	}
+	return opts, nil
+}
+
+func parseInvitesArgs(args []string) (invitesOptions, error) {
+	var opts invitesOptions
+	for _, arg := range args {
+		switch arg {
+		case "--json":
+			opts.JSON = true
+		default:
+			return invitesOptions{}, fmt.Errorf("unknown argument %s", arg)
+		}
+	}
+	return opts, nil
+}
+
+func parseInviteCreateArgs(args []string) (inviteCreateOptions, error) {
+	var opts inviteCreateOptions
+	for _, arg := range args {
+		switch arg {
+		case "--json":
+			opts.JSON = true
+		default:
+			return inviteCreateOptions{}, fmt.Errorf("unknown argument %s", arg)
+		}
 	}
 	return opts, nil
 }

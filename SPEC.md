@@ -231,6 +231,9 @@ skillsdex install-defaults --target codex
 skillsdex plugins [plugin-slug] [--target laptop]
 skillsdex plugin add <slug> --name <name> --url <url> --command <command> [--target laptop]
 skillsdex plugin install <slug> [--dry-run] [--yes|--no]
+skillsdex invites [--json]
+skillsdex invites create [--json]
+skillsdex invites revoke <invite-id>
 skillsdex installed
 skillsdex sync
 skillsdex uninstall <owner>/<slug> --target codex
@@ -555,9 +558,23 @@ The first external blob store can be local filesystem, S3, R2, or similar. Even 
 
 For phase 1, usernames and owner slugs are immutable. Display names and email can change later, but changing namespace identifiers requires a deliberate redirect/alias design and is out of scope.
 
-Account creation is admin-controlled. On first startup, if no users exist, create `admin` / `admin`. Admin users can create users and set/reset passwords from the web UI. Normal self-service password change can wait.
+Account creation is controlled by admins and invites. On first startup, if no users exist, create `admin` / `admin`. Admin users can create users directly and set/reset passwords from the web UI. Admins can also create one-time signup invites that expire after 24 hours. An invite authorizes signup by possession of the URL; the new user chooses their username and may add email as account metadata. Normal self-service password change can wait.
 
 Do not hard-delete users in phase 1. Deactivate users instead.
+
+### SignupInvite
+
+- `id`
+- `token_hash`
+- `token_preview`
+- `created_by`
+- `created_at`
+- `expires_at`
+- `used_at`
+- `used_by`
+- `revoked_at`
+
+Signup invite tokens are shown only once as part of the signup URL. The database stores only a token hash and a short preview for identification. An invite can be used once, revoked by an admin, or expire after 24 hours.
 
 ### APIToken
 
@@ -655,6 +672,18 @@ CREATE TABLE api_tokens (
   token TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL,
   last_used_at TEXT,
+  revoked_at TEXT
+);
+
+CREATE TABLE signup_invites (
+  id TEXT PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  token_preview TEXT NOT NULL DEFAULT '',
+  created_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  used_by TEXT REFERENCES users(id),
   revoked_at TEXT
 );
 
@@ -861,27 +890,29 @@ The first useful release is complete when:
 3. First startup creates `admin` / `admin` if no users exist.
 4. A user can log into the web app.
 5. An admin can create users and set/reset passwords in the web app.
-6. The web app shows only the current user's private skill library.
-7. A user can create a private skill in the web app.
-8. The skill has a stable identifier like `iain/debugging`.
-9. Usernames and owner slugs are immutable.
-10. A user can edit frontmatter fields and Markdown body in the web app.
-11. The app generates complete `SKILL.md` output from separate fields.
-12. A user can preview the rendered skill Markdown before saving.
-13. Saving creates an immutable new revision.
-14. A user can inspect revision history in the web app.
-15. A user can view a revision diff in the web app.
-16. A user can view the raw `SKILL.md` for a skill.
-17. A user can generate and later view an API token in the web app.
-18. A user can authenticate the CLI with that API token.
-19. `skillsdex skills` lists the user's skills.
-20. `skillsdex install iain/debugging --target codex` writes a Codex skill to `~/.codex/skills/iain--debugging/SKILL.md`.
-21. `skillsdex installed` shows the local install.
-22. Editing the skill in the web app and running `skillsdex sync` updates the local install.
-23. If the local file was manually edited, `sync` detects the hash mismatch and does not overwrite without confirmation.
-24. If an unmanaged target file already exists, interactive CLI prompts before overwriting.
-25. If an unmanaged target file already exists in non-interactive mode, CLI fails unless an explicit future force flag is used.
-26. If the remote skill is archived, `sync` warns but leaves the local installed file in place.
+6. An admin can create and revoke one-time signup invites from the web UI and CLI.
+7. An invited user can choose a username, optionally add email metadata, and create a non-admin account before the invite expires.
+8. The web app shows only the current user's private skill library.
+9. A user can create a private skill in the web app.
+10. The skill has a stable identifier like `iain/debugging`.
+11. Usernames and owner slugs are immutable.
+12. A user can edit frontmatter fields and Markdown body in the web app.
+13. The app generates complete `SKILL.md` output from separate fields.
+14. A user can preview the rendered skill Markdown before saving.
+15. Saving creates an immutable new revision.
+16. A user can inspect revision history in the web app.
+17. A user can view a revision diff in the web app.
+18. A user can view the raw `SKILL.md` for a skill.
+19. A user can generate and later view an API token in the web app.
+20. A user can authenticate the CLI with that API token.
+21. `skillsdex skills` lists the user's skills.
+22. `skillsdex install iain/debugging --target codex` writes a Codex skill to `~/.codex/skills/iain--debugging/SKILL.md`.
+23. `skillsdex installed` shows the local install.
+24. Editing the skill in the web app and running `skillsdex sync` updates the local install.
+25. If the local file was manually edited, `sync` detects the hash mismatch and does not overwrite without confirmation.
+26. If an unmanaged target file already exists, interactive CLI prompts before overwriting.
+27. If an unmanaged target file already exists in non-interactive mode, CLI fails unless an explicit future force flag is used.
+28. If the remote skill is archived, `sync` warns but leaves the local installed file in place.
 
 ## Phase 1 Decisions
 
@@ -897,6 +928,8 @@ The first useful release is complete when:
 - First user is `admin` / `admin`, created automatically if no users exist.
 - No forced password change for the default admin account in phase 1.
 - Admin web UI can create users and set/reset passwords.
+- Admin web UI and CLI can create one-time 24-hour signup invites.
+- Invite signup lets users choose their username and optionally store email metadata.
 - Normal self-service password changes can wait.
 - Usernames and owner slugs are immutable in phase 1.
 - Skills are edited as separate fields that generate `SKILL.md`.

@@ -13,6 +13,23 @@ type User struct {
 	CreatedAt          time.Time
 }
 
+type SignupInvite struct {
+	ID           string    `json:"id"`
+	TokenPreview string    `json:"token_preview"`
+	CreatedBy    string    `json:"created_by"`
+	CreatedAt    time.Time `json:"created_at"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	UsedAt       string    `json:"used_at,omitempty"`
+	UsedBy       string    `json:"used_by,omitempty"`
+	RevokedAt    string    `json:"revoked_at,omitempty"`
+}
+
+type SignupInviteCreateResult struct {
+	Invite SignupInvite `json:"invite"`
+	Token  string       `json:"token,omitempty"`
+	URL    string       `json:"url,omitempty"`
+}
+
 type Skill struct {
 	ID                 string    `json:"id"`
 	OwnerType          string    `json:"owner_type"`

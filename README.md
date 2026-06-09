@@ -43,10 +43,11 @@ In the web app:
 
 1. Log in as `admin`.
 2. Change the default password if prompted, then open `Setup` for the guided first-run checklist.
-3. Create a skill, import one from GitHub, or open `Top Skills` to import from agentskill.sh.
-4. Open `Collections` to create a named install set for a machine, workflow, client, or project type.
-5. Open `API Tokens`.
-6. Generate a token and copy it before leaving the page.
+3. Open `Admin > Invites` if you want another user to create their own account.
+4. Create a skill, import one from GitHub, or open `Top Skills` to import from agentskill.sh.
+5. Open `Collections` to create a named install set for a machine, workflow, client, or project type.
+6. Open `API Tokens`.
+7. Generate a token and copy it before leaving the page.
 
 To dump your library, open `Skills` and choose `Export`. The download is a zip of every owned skill package, including archived skills, plus a `skillsdex-export.json` manifest with revision and source metadata. To restore it, open `Import`, choose `Restore Backup`, and upload the zip.
 
@@ -78,6 +79,17 @@ printf '%s\n' "$SKILLSDEX_TOKEN" | ./skillsdex login --server http://127.0.0.1:8
 ```
 
 API tokens are shown once when created. After that, the web app stores only a hash and displays a short preview so you can identify and revoke the token later.
+
+Invite another user:
+
+```bash
+./skillsdex invites
+./skillsdex invites create
+./skillsdex invites create --json
+./skillsdex invites revoke <invite-id>
+```
+
+Admins can also create and revoke invites from `Admin > Invites`. Each invite creates a one-time signup URL that expires after 24 hours. The invite authorizes signup by possession of the URL; the new user chooses their own username and may add email as account metadata. After signup, the user is sent to the login page.
 
 Preview the local onboarding plan:
 
@@ -342,7 +354,7 @@ skillsdex admin reset-password --db /var/lib/skillsdex/skillsdex.db --username a
 
 The reset requires an admin user, enforces the normal password length rule, revokes existing web sessions and API tokens for that user, and records an audit event.
 
-Admins can also open `Admin > Maintenance` to review database/storage size, see the largest users and skills by stored revision bytes, prune expired web sessions, revoked API token metadata, old audit events, and old skill revisions. Revision pruning keeps the newest configured revisions per skill. User deletion is separate and destructive: it removes the account, owned skills, revisions, sessions, tokens, tags, and install sets.
+Admins can open `Admin > Invites` to generate one-time signup links, and `Admin > Maintenance` to review database/storage size, see the largest users and skills by stored revision bytes, prune expired web sessions, revoked API token metadata, old audit events, and old skill revisions. Revision pruning keeps the newest configured revisions per skill. User deletion is separate and destructive: it removes the account, owned skills, revisions, sessions, tokens, tags, install sets, and invite references.
 
 Build release archives:
 
@@ -455,8 +467,9 @@ Current context:
 - SkillsDex export zips can be restored from the Import page or CLI with path validation and archived-skill preservation.
 - One-way GitHub export is available from the web app and CLI as a repo-shaped `skills/<owner>/<slug>/` tree.
 - The seeded `admin/admin` login is forced through a password-change setup screen before normal web routes are available, and public binds are refused while that default password remains active.
+- Admins can create one-time 24-hour signup invites from the web UI or `skillsdex invites create`; invited users choose their username and can store email as metadata.
 - API tokens and web session tokens are stored as hashes. API tokens are shown only once. Authenticated web forms use per-session CSRF tokens, including backup uploads, and session cookies are marked `Secure` when served over HTTPS directly or through a configured trusted proxy.
-- Admins can review `Admin > Audit` for recent login, password, token, skill, import/export, backup export/restore, install-set, retention, and local recovery changes.
+- Admins can review `Admin > Audit` for recent login, signup invite, password, token, skill, import/export, backup export/restore, install-set, retention, and local recovery changes.
 - Admins can prune expired sessions, revoked API token metadata, old audit events, and old revisions from `Admin > Maintenance`.
 - systemd, install-script, Docker image build files, checksummed release archives, optional minisign signatures, generated Homebrew formula packaging, and legacy database migration smoke coverage are available for more repeatable local or small-host deployments.
 - The CLI install/sync loop remains the core product path and should stay the main polish target.

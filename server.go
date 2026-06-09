@@ -174,9 +174,12 @@ func (a *app) securityHeaders(next http.Handler) http.Handler {
 func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/static/style.css", a.handleCSS)
 	mux.HandleFunc("/login", a.handleLogin)
+	mux.HandleFunc("/signup", a.handleSignup)
 	mux.HandleFunc("/logout", a.requireWeb(a.handleLogout))
 	mux.HandleFunc("/admin/audit", a.requireAdmin(a.handleAdminAudit))
 	mux.HandleFunc("/admin/maintenance", a.requireAdmin(a.handleAdminMaintenance))
+	mux.HandleFunc("/admin/invites", a.requireAdmin(a.handleAdminInvites))
+	mux.HandleFunc("/admin/invites/", a.requireAdmin(a.handleAdminInviteAction))
 	mux.HandleFunc("/admin/users", a.requireAdmin(a.handleAdminUsers))
 	mux.HandleFunc("/admin/users/", a.requireAdmin(a.handleAdminUserEdit))
 	mux.HandleFunc("/tokens", a.requireWeb(a.handleTokens))
@@ -197,6 +200,18 @@ func (a *app) sourceHTTPClient() httpDoer {
 		return a.httpClient
 	}
 	return defaultSourceHTTPClient
+}
+
+func (a *app) signupURL(r *http.Request, token string) string {
+	scheme := "http"
+	if a.isSecureRequest(r) {
+		scheme = "https"
+	}
+	u := url.URL{Scheme: scheme, Host: r.Host, Path: "/signup"}
+	q := u.Query()
+	q.Set("invite", token)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 func (a *app) handleCSS(w http.ResponseWriter, r *http.Request) {
@@ -371,7 +386,11 @@ func (a *app) setupStatus(ctx context.Context, u *User) (setupStatus, error) {
 
 func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		a.render(w, r, nil, "Login", loginForm(""))
+		msg := ""
+		if r.URL.Query().Get("signed_up") == "1" {
+			msg = "Account created. Sign in to continue."
+		}
+		a.render(w, r, nil, "Login", loginForm(msg))
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -413,6 +432,52 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, a.sessionCookie(r, token, 0))
 	a.audit(r, u, "login", "user", u.ID, u.Username, map[string]any{"password_change_required": redirectTo == "/setup/password"})
 	http.Redirect(w, r, redirectTo, http.StatusFound)
+}
+
+func (a *app) handleSignup(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		token := strings.TrimSpace(r.URL.Query().Get("invite"))
+		if token == "" {
+			a.render(w, r, nil, "Sign Up", signupPage("", "This invite is invalid or expired."))
+			return
+		}
+		if _, err := activeSignupInviteByToken(r.Context(), a.db, token); err != nil {
+			a.render(w, r, nil, "Sign Up", signupPage("", "This invite is invalid or expired."))
+			return
+		}
+		a.render(w, r, nil, "Sign Up", signupPage(token, ""))
+	case http.MethodPost:
+		r.Body = http.MaxBytesReader(w, r.Body, maxImportedSkillBytes)
+		if err := r.ParseForm(); err != nil {
+			a.render(w, r, nil, "Sign Up", signupPage("", "Invalid form."))
+			return
+		}
+		token := strings.TrimSpace(r.FormValue("invite"))
+		if token == "" {
+			a.render(w, r, nil, "Sign Up", signupPage("", "This invite is invalid or expired."))
+			return
+		}
+		password := r.FormValue("password")
+		if password != r.FormValue("confirm_password") {
+			a.render(w, r, nil, "Sign Up", signupPage(token, "passwords do not match"))
+			return
+		}
+		user, invite, err := signupWithInvite(r.Context(), a.db, token, r.FormValue("username"), r.FormValue("email"), password)
+		if err != nil {
+			msg := err.Error()
+			if strings.Contains(msg, "invite") {
+				msg = "This invite is invalid or expired."
+			}
+			a.render(w, r, nil, "Sign Up", signupPage(token, msg))
+			return
+		}
+		a.audit(r, nil, "signup_invite_used", "invite", invite.ID, invite.TokenPreview, map[string]any{"username": user.Username})
+		a.audit(r, user, "user_signed_up", "user", user.ID, user.Username, nil)
+		http.Redirect(w, r, "/login?signed_up=1", http.StatusFound)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (a *app) loginBlocked(r *http.Request, username string) (time.Time, bool) {
@@ -706,6 +771,57 @@ func (a *app) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (a *app) handleAdminInvites(w http.ResponseWriter, r *http.Request) {
+	u := webUser(r)
+	switch r.Method {
+	case http.MethodGet:
+		invites, err := listSignupInvites(r.Context(), a.db)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		a.render(w, r, u, "Invites", invitesPage(invites, "", ""))
+	case http.MethodPost:
+		result, err := createSignupInvite(r.Context(), a.db, u.ID)
+		if err != nil {
+			invites, _ := listSignupInvites(r.Context(), a.db)
+			a.render(w, r, u, "Invites", invitesPage(invites, "", err.Error()))
+			return
+		}
+		result.URL = a.signupURL(r, result.Token)
+		a.audit(r, u, "signup_invite_created", "invite", result.Invite.ID, result.Invite.TokenPreview, map[string]any{"expires_at": result.Invite.ExpiresAt.Format(time.RFC3339)})
+		invites, err := listSignupInvites(r.Context(), a.db)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		a.render(w, r, u, "Invites", invitesPage(invites, result.URL, ""))
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (a *app) handleAdminInviteAction(w http.ResponseWriter, r *http.Request) {
+	rel := strings.Trim(strings.TrimPrefix(r.URL.Path, "/admin/invites/"), "/")
+	parts := strings.Split(rel, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] != "revoke" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	invite, err := revokeSignupInvite(r.Context(), a.db, parts[0])
+	if err != nil {
+		invites, _ := listSignupInvites(r.Context(), a.db)
+		a.render(w, r, webUser(r), "Invites", invitesPage(invites, "", err.Error()))
+		return
+	}
+	a.audit(r, webUser(r), "signup_invite_revoked", "invite", invite.ID, invite.TokenPreview, nil)
+	http.Redirect(w, r, "/admin/invites", http.StatusFound)
 }
 
 func (a *app) handleAdminUserEdit(w http.ResponseWriter, r *http.Request) {
@@ -1777,6 +1893,53 @@ func (a *app) handleAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"set": set, "skills": skills})
 		return
 	}
+	if path == "invites" {
+		if !u.IsAdmin {
+			writeJSONError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			invites, err := listSignupInvites(r.Context(), a.db)
+			if err != nil {
+				writeJSONError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, map[string]any{"invites": invites})
+		case http.MethodPost:
+			result, err := createSignupInvite(r.Context(), a.db, u.ID)
+			if err != nil {
+				writeJSONError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			result.URL = a.signupURL(r, result.Token)
+			a.audit(r, u, "signup_invite_created", "invite", result.Invite.ID, result.Invite.TokenPreview, map[string]any{"expires_at": result.Invite.ExpiresAt.Format(time.RFC3339), "api": true})
+			writeJSON(w, result)
+		default:
+			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+		return
+	}
+	if strings.HasPrefix(path, "invites/") {
+		if !u.IsAdmin {
+			writeJSONError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		rel := strings.Trim(strings.TrimPrefix(path, "invites/"), "/")
+		parts := strings.Split(rel, "/")
+		if len(parts) == 2 && parts[0] != "" && parts[1] == "revoke" && r.Method == http.MethodPost {
+			invite, err := revokeSignupInvite(r.Context(), a.db, parts[0])
+			if err != nil {
+				writeJSONError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			a.audit(r, u, "signup_invite_revoked", "invite", invite.ID, invite.TokenPreview, map[string]any{"api": true})
+			writeJSON(w, map[string]any{"invite": invite})
+			return
+		}
+		writeJSONError(w, http.StatusNotFound, "not found")
+		return
+	}
 	if path == "plugins" && r.Method == http.MethodGet {
 		target := strings.TrimSpace(r.URL.Query().Get("target"))
 		if target != "" {
@@ -2147,6 +2310,26 @@ func loginForm(msg string) template.HTML {
 	return template.HTML(b.String())
 }
 
+func signupPage(inviteToken, msg string) template.HTML {
+	var b strings.Builder
+	b.WriteString(`<section class="login-shell"><div class="login-brand"><div class="product-lockup"><div class="mark">SD</div><div><p class="eyebrow">Invite signup</p><h1>SkillsDex</h1></div></div><p>Create a local account from an admin invite. Choose the username you want to use as your SkillsDex namespace.</p><div class="login-graphic" aria-hidden="true"><div class="stack-card primary"><span>invite</span><strong>24h</strong></div><div class="stack-card"><span>username</span><strong>you</strong></div><div class="stack-card muted-card"><span>role</span><strong>user</strong></div></div></div><form class="panel login-panel" method="post" action="/signup"><div class="panel-head"><div class="panel-icon">` + icon("users") + `</div><div><h2>Create Account</h2><p>Use your invite before it expires.</p></div></div>`)
+	if msg != "" {
+		b.WriteString(`<p class="flash">` + html.EscapeString(msg) + `</p>`)
+	}
+	if inviteToken != "" {
+		b.WriteString(`<input type="hidden" name="invite" value="` + html.EscapeString(inviteToken) + `">
+		<label>Username <input name="username" autocomplete="username" required autofocus pattern="[a-z0-9][a-z0-9-]{0,62}"></label>
+		<label>Email <input name="email" type="email" autocomplete="email"></label>
+		<label>Password <input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+		<label>Confirm password <input name="confirm_password" type="password" autocomplete="new-password" minlength="12" required></label>
+		<button type="submit">` + iconLabel("users", "Create Account") + `</button>`)
+	} else {
+		b.WriteString(`<a class="button secondary" href="/login">` + iconLabel("key", "Back to Login") + `</a>`)
+	}
+	b.WriteString(`</form></section>`)
+	return template.HTML(b.String())
+}
+
 func passwordChangePage(msg string) template.HTML {
 	var b strings.Builder
 	b.WriteString(`<section class="panel narrow"><p class="eyebrow">Setup</p><h1>Change Password</h1><p>Replace the default admin password before continuing.</p>`)
@@ -2160,6 +2343,50 @@ func passwordChangePage(msg string) template.HTML {
 		<button type="submit">` + iconLabel("key", "Update Password") + `</button>
 	</form></section>`)
 	return template.HTML(b.String())
+}
+
+func invitesPage(invites []SignupInvite, inviteURL, msg string) template.HTML {
+	var b strings.Builder
+	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Admin</p><h1>Invites</h1><p>Create 24-hour signup links for new non-admin users.</p></div><div class="page-art users-art" aria-hidden="true">` + icon("users") + `</div></header><div class="split"><section class="surface data-surface">`)
+	if msg != "" {
+		b.WriteString(`<p class="flash">` + html.EscapeString(msg) + `</p>`)
+	}
+	if inviteURL != "" {
+		b.WriteString(`<div class="command-card"><span>One-time signup URL</span><pre>` + html.EscapeString(inviteURL) + `</pre></div>`)
+	}
+	b.WriteString(`<table><thead><tr><th>Token</th><th>Status</th><th>Created</th><th>Expires</th><th>Used By</th><th></th></tr></thead><tbody>`)
+	if len(invites) == 0 {
+		b.WriteString(`<tr><td colspan="6"><div class="empty">No signup invites yet.</div></td></tr>`)
+	}
+	for _, invite := range invites {
+		status := signupInviteStatus(invite)
+		action := ""
+		if status == "active" {
+			action = `<form method="post" action="/admin/invites/` + html.EscapeString(invite.ID) + `/revoke"><button class="link danger" type="submit">` + iconLabel("trash", "Revoke") + `</button></form>`
+		}
+		usedBy := invite.UsedBy
+		if usedBy == "" {
+			usedBy = "-"
+		}
+		b.WriteString(`<tr><td><code>` + html.EscapeString(invite.TokenPreview) + `</code><div class="muted">` + html.EscapeString(invite.ID) + `</div></td><td><span class="pill ` + html.EscapeString(status) + `">` + html.EscapeString(status) + `</span></td><td>` + invite.CreatedAt.Format("2006-01-02 15:04") + `</td><td>` + invite.ExpiresAt.Format("2006-01-02 15:04") + `</td><td>` + html.EscapeString(usedBy) + `</td><td>` + action + `</td></tr>`)
+	}
+	b.WriteString(`</tbody></table></section><aside class="panel sticky"><div class="panel-head"><div class="panel-icon">` + icon("key") + `</div><div><h2>New Invite</h2><p>Create a single-use signup link that expires in 24 hours.</p></div></div><form method="post" action="/admin/invites">
+		<button type="submit">` + iconLabel("plus", "Create Invite") + `</button>
+	</form><div class="command-card"><span>CLI</span><pre>skillsdex invites create</pre></div></aside></div>`)
+	return template.HTML(b.String())
+}
+
+func signupInviteStatus(invite SignupInvite) string {
+	switch {
+	case invite.RevokedAt != "":
+		return "revoked"
+	case invite.UsedAt != "":
+		return "used"
+	case !invite.ExpiresAt.After(nowUTC()):
+		return "expired"
+	default:
+		return "active"
+	}
 }
 
 func usersPage(users []User, msg string) template.HTML {
@@ -3121,7 +3348,7 @@ var layoutTmpl = `<!doctype html>
 					<a href="/skills/top" data-nav="/skills/top">` + iconLabel("spark", "Top Skills") + `</a>
 					<a href="/help" data-nav="/help">` + iconLabel("help", "Help") + `</a>
 				<a href="/tokens" data-nav="/tokens">` + iconLabel("key", "API Tokens") + `</a>
-				{{if .User.IsAdmin}}<a href="/admin/users" data-nav="/admin/users">` + iconLabel("users", "Users") + `</a><a href="/admin/audit" data-nav="/admin/audit">` + iconLabel("archive", "Audit") + `</a><a href="/admin/maintenance" data-nav="/admin/maintenance">` + iconLabel("trash", "Maintenance") + `</a>{{end}}
+				{{if .User.IsAdmin}}<a href="/admin/users" data-nav="/admin/users">` + iconLabel("users", "Users") + `</a><a href="/admin/invites" data-nav="/admin/invites">` + iconLabel("key", "Invites") + `</a><a href="/admin/audit" data-nav="/admin/audit">` + iconLabel("archive", "Audit") + `</a><a href="/admin/maintenance" data-nav="/admin/maintenance">` + iconLabel("trash", "Maintenance") + `</a>{{end}}
 			</div>
 			<button class="theme-toggle icon-button" type="button" aria-label="Toggle color theme" data-theme-toggle>` + icon("sun") + `<span class="button-label">Theme</span></button>
 			<form method="post" action="/logout">{{.CSRFField}}<button class="link nav-logout" type="submit">` + icon("logout") + `<span class="button-label">Logout {{.User.Username}}</span></button></form>

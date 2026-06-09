@@ -16,6 +16,7 @@ import (
 )
 
 const minPasswordLength = 12
+const signupInviteTTL = 24 * time.Hour
 
 func openDB(path string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", path)
@@ -110,6 +111,17 @@ func migrate(db *sql.DB) error {
 			created_at TEXT NOT NULL,
 			expires_at TEXT NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS signup_invites (
+			id TEXT PRIMARY KEY,
+			token_hash TEXT NOT NULL UNIQUE,
+			token_preview TEXT NOT NULL DEFAULT '',
+			created_by TEXT REFERENCES users(id),
+			created_at TEXT NOT NULL,
+			expires_at TEXT NOT NULL,
+			used_at TEXT,
+			used_by TEXT REFERENCES users(id),
+			revoked_at TEXT
+		);`,
 		`CREATE TABLE IF NOT EXISTS install_sets (
 			id TEXT PRIMARY KEY,
 			user_id TEXT NOT NULL REFERENCES users(id),
@@ -170,6 +182,7 @@ func migrate(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_install_sets_user ON install_sets(user_id, updated_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_install_set_skills_set ON install_set_skills(set_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_plugin_installs_user ON plugin_installs(user_id, target, updated_at);`,
+		`CREATE INDEX IF NOT EXISTS idx_signup_invites_created ON signup_invites(created_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_tags_user_slug ON tags(user_id, slug);`,
 		`CREATE INDEX IF NOT EXISTS idx_skill_tags_tag ON skill_tags(tag_id, skill_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_events_created ON audit_events(created_at DESC);`,
@@ -1104,6 +1117,187 @@ func createUser(ctx context.Context, db *sql.DB, username, email, password strin
 	return err
 }
 
+func createSignupInvite(ctx context.Context, db *sql.DB, createdBy string) (SignupInviteCreateResult, error) {
+	token := newToken()
+	now := nowUTC()
+	invite := SignupInvite{
+		ID:           newID("inv"),
+		TokenPreview: tokenPreview(token),
+		CreatedBy:    createdBy,
+		CreatedAt:    now,
+		ExpiresAt:    now.Add(signupInviteTTL),
+	}
+	_, err := db.ExecContext(ctx, `INSERT INTO signup_invites (id, token_hash, token_preview, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		invite.ID, inviteTokenHash(token), invite.TokenPreview, createdBy, invite.CreatedAt.Format(time.RFC3339), invite.ExpiresAt.Format(time.RFC3339))
+	if err != nil {
+		return SignupInviteCreateResult{}, err
+	}
+	return SignupInviteCreateResult{Invite: invite, Token: token}, nil
+}
+
+func listSignupInvites(ctx context.Context, db *sql.DB) ([]SignupInvite, error) {
+	rows, err := db.QueryContext(ctx, `SELECT i.id, i.token_preview, COALESCE(u.username, ''), i.created_at, i.expires_at, COALESCE(i.used_at, ''), COALESCE(used.username, ''), COALESCE(i.revoked_at, '')
+		FROM signup_invites i
+		LEFT JOIN users u ON u.id = i.created_by
+		LEFT JOIN users used ON used.id = i.used_by
+		ORDER BY i.created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var invites []SignupInvite
+	for rows.Next() {
+		invite, err := scanSignupInvite(rows)
+		if err != nil {
+			return nil, err
+		}
+		invites = append(invites, *invite)
+	}
+	return invites, rows.Err()
+}
+
+func getSignupInviteByID(ctx context.Context, db *sql.DB, id string) (*SignupInvite, error) {
+	row := db.QueryRowContext(ctx, `SELECT i.id, i.token_preview, COALESCE(u.username, ''), i.created_at, i.expires_at, COALESCE(i.used_at, ''), COALESCE(used.username, ''), COALESCE(i.revoked_at, '')
+		FROM signup_invites i
+		LEFT JOIN users u ON u.id = i.created_by
+		LEFT JOIN users used ON used.id = i.used_by
+		WHERE i.id = ?`, id)
+	return scanSignupInvite(row)
+}
+
+func activeSignupInviteByToken(ctx context.Context, db *sql.DB, token string) (*SignupInvite, error) {
+	token = strings.TrimSpace(token)
+	row := db.QueryRowContext(ctx, `SELECT i.id, i.token_preview, COALESCE(u.username, ''), i.created_at, i.expires_at, COALESCE(i.used_at, ''), COALESCE(used.username, ''), COALESCE(i.revoked_at, '')
+		FROM signup_invites i
+		LEFT JOIN users u ON u.id = i.created_by
+		LEFT JOIN users used ON used.id = i.used_by
+		WHERE i.token_hash = ?`, inviteTokenHash(token))
+	invite, err := scanSignupInvite(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateSignupInviteActive(invite); err != nil {
+		return nil, err
+	}
+	return invite, nil
+}
+
+func scanSignupInvite(row scanner) (*SignupInvite, error) {
+	var invite SignupInvite
+	var created, expires string
+	if err := row.Scan(&invite.ID, &invite.TokenPreview, &invite.CreatedBy, &created, &expires, &invite.UsedAt, &invite.UsedBy, &invite.RevokedAt); err != nil {
+		return nil, err
+	}
+	invite.CreatedAt = parseTime(created)
+	invite.ExpiresAt = parseTime(expires)
+	return &invite, nil
+}
+
+func revokeSignupInvite(ctx context.Context, db *sql.DB, id string) (*SignupInvite, error) {
+	invite, err := getSignupInviteByID(ctx, db, id)
+	if err != nil {
+		return nil, err
+	}
+	if invite.UsedAt != "" {
+		return nil, errors.New("invite has already been used")
+	}
+	if invite.RevokedAt == "" {
+		if _, err := db.ExecContext(ctx, `UPDATE signup_invites SET revoked_at = ? WHERE id = ?`, nowUTC().Format(time.RFC3339), id); err != nil {
+			return nil, err
+		}
+	}
+	return getSignupInviteByID(ctx, db, id)
+}
+
+func signupWithInvite(ctx context.Context, db *sql.DB, token, username, email, password string) (*User, *SignupInvite, error) {
+	token = strings.TrimSpace(token)
+	username = strings.TrimSpace(username)
+	email = strings.TrimSpace(email)
+	if err := validateSlug("username", username); err != nil {
+		return nil, nil, err
+	}
+	if err := validatePassword(password); err != nil {
+		return nil, nil, err
+	}
+	if _, err := activeSignupInviteByToken(ctx, db, token); err != nil {
+		if isNotFound(err) {
+			return nil, nil, errors.New("invalid or expired invite")
+		}
+		return nil, nil, err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, nil, err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer tx.Rollback()
+
+	row := tx.QueryRowContext(ctx, `SELECT i.id, i.token_preview, COALESCE(u.username, ''), i.created_at, i.expires_at, COALESCE(i.used_at, ''), COALESCE(used.username, ''), COALESCE(i.revoked_at, '')
+		FROM signup_invites i
+		LEFT JOIN users u ON u.id = i.created_by
+		LEFT JOIN users used ON used.id = i.used_by
+		WHERE i.token_hash = ?`, inviteTokenHash(token))
+	invite, err := scanSignupInvite(row)
+	if err != nil {
+		if isNotFound(err) {
+			return nil, nil, errors.New("invalid or expired invite")
+		}
+		return nil, nil, err
+	}
+	if err := validateSignupInviteActive(invite); err != nil {
+		return nil, nil, err
+	}
+	now := nowUTC().Format(time.RFC3339)
+	userID := newID("usr")
+	if _, err := tx.ExecContext(ctx, `INSERT INTO users (id, username, password_hash, is_admin, email, created_at) VALUES (?, ?, ?, 0, NULLIF(?, ''), ?)`,
+		userID, username, string(hash), email, now); err != nil {
+		if strings.Contains(err.Error(), "users.username") {
+			return nil, nil, errors.New("username already exists")
+		}
+		if strings.Contains(err.Error(), "users.email") {
+			return nil, nil, errors.New("email already exists")
+		}
+		return nil, nil, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE signup_invites SET used_at = ?, used_by = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL`,
+		now, userID, invite.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return nil, nil, err
+	}
+	if affected != 1 {
+		return nil, nil, errors.New("invite has already been used")
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, nil, err
+	}
+	user, err := getUserByID(ctx, db, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	invite, err = getSignupInviteByID(ctx, db, invite.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return user, invite, nil
+}
+
+func validateSignupInviteActive(invite *SignupInvite) error {
+	if invite == nil {
+		return errors.New("invalid invite")
+	}
+	if invite.RevokedAt != "" || invite.UsedAt != "" || !invite.ExpiresAt.After(nowUTC()) {
+		return errors.New("invalid or expired invite")
+	}
+	return nil
+}
+
 func updateUser(ctx context.Context, db *sql.DB, id, email, password string, isAdmin, deactivated bool) error {
 	current, err := getUserByID(ctx, db, id)
 	if err != nil {
@@ -1167,6 +1361,12 @@ func deleteUser(ctx context.Context, db *sql.DB, id string) error {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM api_tokens WHERE user_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE signup_invites SET created_by = NULL WHERE created_by = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE signup_invites SET used_by = NULL WHERE used_by = ?`, id); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM install_set_skills WHERE set_id IN (SELECT id FROM install_sets WHERE user_id = ?)`, id); err != nil {

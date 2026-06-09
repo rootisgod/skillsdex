@@ -215,6 +215,109 @@ func TestPluginInstallsAreScopedAndValidated(t *testing.T) {
 	}
 }
 
+func TestSignupInviteLifecycleAndAtomicSignup(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := createSignupInvite(ctx, db, admin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Token == "" || result.Invite.TokenPreview == "" {
+		t.Fatalf("invite did not include one-time token and preview: %#v", result)
+	}
+	var rawToken string
+	if err := db.QueryRowContext(ctx, `SELECT token_hash FROM signup_invites WHERE id = ?`, result.Invite.ID).Scan(&rawToken); err != nil {
+		t.Fatal(err)
+	}
+	if rawToken == result.Token || strings.Contains(rawToken, result.Token) {
+		t.Fatal("invite stored raw token")
+	}
+	if _, err := activeSignupInviteByToken(ctx, db, result.Token); err != nil {
+		t.Fatalf("active invite lookup failed: %v", err)
+	}
+
+	user, used, err := signupWithInvite(ctx, db, result.Token, "octocat", "octocat@example.com", "octocat-password-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.Username != "octocat" || user.IsAdmin {
+		t.Fatalf("unexpected signup user: %#v", user)
+	}
+	if used.UsedAt == "" || used.UsedBy != "octocat" {
+		t.Fatalf("invite was not marked used by octocat: %#v", used)
+	}
+	if _, err := activeSignupInviteByToken(ctx, db, result.Token); err == nil {
+		t.Fatal("used invite should not remain active")
+	}
+
+	second, err := createSignupInvite(ctx, db, admin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := signupWithInvite(ctx, db, second.Token, "octocat", "other@example.com", "octocat-password-456"); err == nil {
+		t.Fatal("duplicate username signup should fail")
+	}
+	stillActive, err := activeSignupInviteByToken(ctx, db, second.Token)
+	if err != nil {
+		t.Fatalf("invite should remain active after failed user insert: %v", err)
+	}
+	if stillActive.UsedAt != "" {
+		t.Fatalf("failed signup consumed invite: %#v", stillActive)
+	}
+	revoked, err := revokeSignupInvite(ctx, db, second.Invite.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revoked.RevokedAt == "" {
+		t.Fatalf("invite was not revoked: %#v", revoked)
+	}
+	if _, err := activeSignupInviteByToken(ctx, db, second.Token); err == nil {
+		t.Fatal("revoked invite should not be active")
+	}
+
+	if err := createUser(ctx, db, "inviter", "", "inviter-password-123", false); err != nil {
+		t.Fatal(err)
+	}
+	inviter, err := getUserByUsername(ctx, db, "inviter")
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdByDeleted, err := createSignupInvite(ctx, db, inviter.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteUser(ctx, db, inviter.ID); err != nil {
+		t.Fatal(err)
+	}
+	creatorCleared, err := getSignupInviteByID(ctx, db, createdByDeleted.Invite.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creatorCleared.CreatedBy != "" {
+		t.Fatalf("deleted invite creator reference was not cleared: %#v", creatorCleared)
+	}
+
+	if err := deleteUser(ctx, db, user.ID); err != nil {
+		t.Fatal(err)
+	}
+	usedByCleared, err := getSignupInviteByID(ctx, db, result.Invite.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usedByCleared.UsedBy != "" {
+		t.Fatalf("deleted invite user reference was not cleared: %#v", usedByCleared)
+	}
+}
+
 func TestUserAccountHardening(t *testing.T) {
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
 	if err != nil {

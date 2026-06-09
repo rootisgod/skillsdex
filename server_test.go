@@ -1207,6 +1207,118 @@ func TestPluginInstallAPI(t *testing.T) {
 	}
 }
 
+func TestSignupInviteWebAndAPI(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminToken, err := createAPIToken(ctx, db, admin.ID, "admin-api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminSession, err := createWebSession(ctx, db, admin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a := &app{db: db}
+	mux := http.NewServeMux()
+	a.routes(mux)
+
+	pageReq := httptest.NewRequest(http.MethodGet, "/admin/invites", nil)
+	pageReq.AddCookie(&http.Cookie{Name: "skillsdex_session", Value: adminSession})
+	pageW := httptest.NewRecorder()
+	mux.ServeHTTP(pageW, pageReq)
+	if pageW.Code != http.StatusOK {
+		t.Fatalf("admin invites page = %d: %s", pageW.Code, pageW.Body.String())
+	}
+	if !strings.Contains(pageW.Body.String(), "Create Invite") || !strings.Contains(pageW.Body.String(), "skillsdex invites create") {
+		t.Fatalf("admin invites page missing controls:\n%s", pageW.Body.String())
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/invites", nil)
+	createReq.Header.Set("Authorization", "Bearer "+adminToken)
+	createW := httptest.NewRecorder()
+	mux.ServeHTTP(createW, createReq)
+	if createW.Code != http.StatusOK {
+		t.Fatalf("api create invite = %d: %s", createW.Code, createW.Body.String())
+	}
+	var created SignupInviteCreateResult
+	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Token == "" || created.URL == "" || !strings.Contains(created.URL, "/signup?invite=") {
+		t.Fatalf("create invite did not return token and URL: %#v", created)
+	}
+	if strings.Contains(createW.Body.String(), inviteTokenHash(created.Token)) {
+		t.Fatal("create response leaked invite token hash")
+	}
+
+	signupReq := httptest.NewRequest(http.MethodGet, "/signup?invite="+url.QueryEscape(created.Token), nil)
+	signupW := httptest.NewRecorder()
+	mux.ServeHTTP(signupW, signupReq)
+	if signupW.Code != http.StatusOK || !strings.Contains(signupW.Body.String(), "Create Account") {
+		t.Fatalf("signup form = %d: %s", signupW.Code, signupW.Body.String())
+	}
+
+	postBody := "invite=" + url.QueryEscape(created.Token) + "&username=octocat&email=octocat%40example.com&password=octocat-password-123&confirm_password=octocat-password-123"
+	postReq := httptest.NewRequest(http.MethodPost, "/signup", strings.NewReader(postBody))
+	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	postW := httptest.NewRecorder()
+	mux.ServeHTTP(postW, postReq)
+	if postW.Code != http.StatusFound || postW.Header().Get("Location") != "/login?signed_up=1" {
+		t.Fatalf("signup post = %d location %q body %s", postW.Code, postW.Header().Get("Location"), postW.Body.String())
+	}
+	octocat, err := getUserByUsername(ctx, db, "octocat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if octocat.IsAdmin || octocat.Email != "octocat@example.com" {
+		t.Fatalf("unexpected signed-up user: %#v", octocat)
+	}
+
+	reuseReq := httptest.NewRequest(http.MethodGet, "/signup?invite="+url.QueryEscape(created.Token), nil)
+	reuseW := httptest.NewRecorder()
+	mux.ServeHTTP(reuseW, reuseReq)
+	if reuseW.Code != http.StatusOK || !strings.Contains(reuseW.Body.String(), "invalid or expired") {
+		t.Fatalf("used invite page = %d: %s", reuseW.Code, reuseW.Body.String())
+	}
+
+	userToken, err := createAPIToken(ctx, db, octocat.ID, "user-api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	forbiddenReq := httptest.NewRequest(http.MethodGet, "/v1/invites", nil)
+	forbiddenReq.Header.Set("Authorization", "Bearer "+userToken)
+	forbiddenW := httptest.NewRecorder()
+	mux.ServeHTTP(forbiddenW, forbiddenReq)
+	if forbiddenW.Code != http.StatusForbidden {
+		t.Fatalf("non-admin invite list = %d, want 403", forbiddenW.Code)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/v1/invites", nil)
+	listReq.Header.Set("Authorization", "Bearer "+adminToken)
+	listW := httptest.NewRecorder()
+	mux.ServeHTTP(listW, listReq)
+	if listW.Code != http.StatusOK {
+		t.Fatalf("api list invites = %d: %s", listW.Code, listW.Body.String())
+	}
+	var list invitesResponse
+	if err := json.Unmarshal(listW.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Invites) == 0 || list.Invites[0].UsedBy != "octocat" || list.Invites[0].UsedAt == "" {
+		t.Fatalf("invite list did not show used invite: %#v", list)
+	}
+}
+
 func TestSkillAPIIncludesSupportingFiles(t *testing.T) {
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
 	if err != nil {
