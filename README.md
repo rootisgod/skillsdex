@@ -85,11 +85,22 @@ Invite another user:
 ```bash
 ./skillsdex invites
 ./skillsdex invites create
+./skillsdex invites create --email user@example.com
 ./skillsdex invites create --json
 ./skillsdex invites revoke <invite-id>
 ```
 
-Admins can also create and revoke invites from `Admin > Invites`. Each invite creates a one-time signup URL that expires after 24 hours. The invite authorizes signup by possession of the URL; the new user chooses their own username and may add email as account metadata. After signup, the user is sent to the login page.
+Admins can also create, email, and revoke invites from `Admin > Invites`. Each invite creates a one-time signup URL that expires after 24 hours. The invite authorizes signup by possession of the URL; the new user chooses their own username and may add email as account metadata. After signup, the user is sent to the login page.
+
+Invite emails are optional and use Resend when configured on the server:
+
+```bash
+export SKILLSDEX_RESEND_API_KEY="re_xxxxxxxxx"
+export SKILLSDEX_EMAIL_FROM="SkillsDex <invites@example.com>"
+export SKILLSDEX_EMAIL_REPLY_TO="admin@example.com"
+```
+
+Replace `re_xxxxxxxxx` with the real Resend API key and use a sender address from a domain verified in Resend. `SKILLSDEX_EMAIL_REPLY_TO` is optional. If email is not configured, invite creation still returns the signup URL for manual sharing.
 
 Preview the local onboarding plan:
 

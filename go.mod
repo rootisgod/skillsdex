@@ -1,8 +1,9 @@
 module skillsdex
 
-go 1.22
+go 1.23
 
 require (
+	github.com/resend/resend-go/v3 v3.7.0
 	golang.org/x/crypto v0.24.0
 	golang.org/x/term v0.21.0
 	modernc.org/sqlite v1.30.2

@@ -270,7 +270,8 @@ type invitesOptions struct {
 }
 
 type inviteCreateOptions struct {
-	JSON bool
+	JSON  bool
+	Email string
 }
 
 type refreshResponse struct {
@@ -1185,14 +1186,15 @@ func runInvites(args []string) error {
 		case "create":
 			opts, err := parseInviteCreateArgs(args[1:])
 			if err != nil {
-				return errors.New("usage: skillsdex invites create [--json]")
+				return errors.New("usage: skillsdex invites create [--email EMAIL] [--json]")
 			}
 			client, err := authenticatedClient()
 			if err != nil {
 				return err
 			}
 			var result SignupInviteCreateResult
-			if err := client.postJSON("/v1/invites", map[string]bool{}, &result); err != nil {
+			body := SignupInviteCreateRequest{Email: opts.Email}
+			if err := client.postJSON("/v1/invites", body, &result); err != nil {
 				return err
 			}
 			if opts.JSON {
@@ -1200,6 +1202,13 @@ func runInvites(args []string) error {
 			}
 			fmt.Printf("Created invite %s, expires %s.\n", result.Invite.ID, result.Invite.ExpiresAt.Format("2006-01-02 15:04"))
 			fmt.Printf("Signup URL: %s\n", result.URL)
+			if result.EmailTo != "" {
+				if result.EmailID != "" {
+					fmt.Printf("Email sent to %s.\n", result.EmailTo)
+				} else if result.EmailError != "" {
+					fmt.Fprintf(os.Stderr, "Email not sent: %s\n", result.EmailError)
+				}
+			}
 			return nil
 		case "revoke":
 			if len(args) != 2 {
@@ -1221,7 +1230,7 @@ func runInvites(args []string) error {
 	}
 	opts, err := parseInvitesArgs(args)
 	if err != nil {
-		return errors.New("usage: skillsdex invites [--json] | skillsdex invites create [--json] | skillsdex invites revoke <invite-id>")
+		return errors.New("usage: skillsdex invites [--json] | skillsdex invites create [--email EMAIL] [--json] | skillsdex invites revoke <invite-id>")
 	}
 	client, err := authenticatedClient()
 	if err != nil {
@@ -4604,11 +4613,22 @@ func parseInvitesArgs(args []string) (invitesOptions, error) {
 
 func parseInviteCreateArgs(args []string) (inviteCreateOptions, error) {
 	var opts inviteCreateOptions
-	for _, arg := range args {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		switch arg {
 		case "--json":
 			opts.JSON = true
+		case "--email":
+			i++
+			if i >= len(args) {
+				return inviteCreateOptions{}, errors.New("--email requires a value")
+			}
+			opts.Email = strings.TrimSpace(args[i])
 		default:
+			if strings.HasPrefix(arg, "--email=") {
+				opts.Email = strings.TrimSpace(strings.TrimPrefix(arg, "--email="))
+				continue
+			}
 			return inviteCreateOptions{}, fmt.Errorf("unknown argument %s", arg)
 		}
 	}

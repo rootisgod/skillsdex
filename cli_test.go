@@ -2173,7 +2173,8 @@ func TestRunInvitesListsCreatesAndRevokes(t *testing.T) {
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	inviteJSON := `{"invite":{"id":"inv_1","token_preview":"sdx_preview...abc123","created_by":"admin","created_at":"2030-06-08T00:00:00Z","expires_at":"2030-06-09T00:00:00Z"},"token":"sdx_fulltoken","url":"https://skillsdex.example/signup?invite=sdx_fulltoken"}`
-	var sawList, sawCreate, sawRevoke bool
+	var sawList, sawRevoke bool
+	createRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-token" {
 			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
@@ -2184,7 +2185,24 @@ func TestRunInvitesListsCreatesAndRevokes(t *testing.T) {
 			sawList = true
 			_, _ = w.Write([]byte(`{"invites":[{"id":"inv_1","token_preview":"sdx_preview...abc123","created_by":"admin","created_at":"2030-06-08T00:00:00Z","expires_at":"2030-06-09T00:00:00Z"}]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/invites":
-			sawCreate = true
+			createRequests++
+			var in SignupInviteCreateRequest
+			raw, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(raw) > 0 {
+				if err := json.Unmarshal(raw, &in); err != nil {
+					t.Fatalf("create invite json body did not decode: %v\n%s", err, string(raw))
+				}
+			}
+			if createRequests == 2 && in.Email != "friend@example.com" {
+				t.Fatalf("second create email = %q, want friend@example.com", in.Email)
+			}
+			if createRequests == 2 {
+				_, _ = w.Write([]byte(`{"invite":{"id":"inv_1","token_preview":"sdx_preview...abc123","created_by":"admin","created_at":"2030-06-08T00:00:00Z","expires_at":"2030-06-09T00:00:00Z"},"token":"sdx_fulltoken","url":"https://skillsdex.example/signup?invite=sdx_fulltoken","email_to":"friend@example.com","email_id":"email_1"}`))
+				return
+			}
 			_, _ = w.Write([]byte(inviteJSON))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/invites/inv_1/revoke":
 			sawRevoke = true
@@ -2221,7 +2239,7 @@ func TestRunInvitesListsCreatesAndRevokes(t *testing.T) {
 		}
 	}
 	createJSON, err := captureStdout(t, func() error {
-		return runInvites([]string{"create", "--json"})
+		return runInvites([]string{"create", "--email", "friend@example.com", "--json"})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2230,7 +2248,7 @@ func TestRunInvitesListsCreatesAndRevokes(t *testing.T) {
 	if err := json.Unmarshal([]byte(createJSON), &created); err != nil {
 		t.Fatalf("invite create json did not decode: %v\n%s", err, createJSON)
 	}
-	if created.Token != "sdx_fulltoken" || created.Invite.ID != "inv_1" {
+	if created.Token != "sdx_fulltoken" || created.Invite.ID != "inv_1" || created.EmailTo != "friend@example.com" || created.EmailID != "email_1" {
 		t.Fatalf("unexpected invite create json: %#v", created)
 	}
 	revokeOut, err := captureStdout(t, func() error {
@@ -2242,8 +2260,8 @@ func TestRunInvitesListsCreatesAndRevokes(t *testing.T) {
 	if !strings.Contains(revokeOut, "Revoked invite inv_1") {
 		t.Fatalf("revoke output missing confirmation:\n%s", revokeOut)
 	}
-	if !sawList || !sawCreate || !sawRevoke {
-		t.Fatalf("expected list/create/revoke requests, saw list=%v create=%v revoke=%v", sawList, sawCreate, sawRevoke)
+	if !sawList || createRequests != 2 || !sawRevoke {
+		t.Fatalf("expected list/create/revoke requests, saw list=%v create=%d revoke=%v", sawList, createRequests, sawRevoke)
 	}
 }
 

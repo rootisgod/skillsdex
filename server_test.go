@@ -52,6 +52,23 @@ func csrfMultipart(t *testing.T, db *sql.DB, session string, data []byte) (*byte
 	return &body, mw.FormDataContentType()
 }
 
+type fakeInviteEmailSender struct {
+	id        string
+	to        string
+	inviteURL string
+	expiresAt time.Time
+}
+
+func (f *fakeInviteEmailSender) SendInvite(ctx context.Context, to, inviteURL string, expiresAt time.Time) (string, error) {
+	f.to = to
+	f.inviteURL = inviteURL
+	f.expiresAt = expiresAt
+	if f.id == "" {
+		return "email_test", nil
+	}
+	return f.id, nil
+}
+
 func TestHTTPServerUsesBoundedTimeouts(t *testing.T) {
 	mux := http.NewServeMux()
 	server := newHTTPServer("127.0.0.1:0", mux)
@@ -1228,7 +1245,8 @@ func TestSignupInviteWebAndAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	a := &app{db: db}
+	fakeMailer := &fakeInviteEmailSender{id: "email_invite_1"}
+	a := &app{db: db, inviteEmailSender: fakeMailer}
 	mux := http.NewServeMux()
 	a.routes(mux)
 
@@ -1241,6 +1259,22 @@ func TestSignupInviteWebAndAPI(t *testing.T) {
 	}
 	if !strings.Contains(pageW.Body.String(), "Create Invite") || !strings.Contains(pageW.Body.String(), "skillsdex invites create") {
 		t.Fatalf("admin invites page missing controls:\n%s", pageW.Body.String())
+	}
+
+	webCreateBody := csrfForm(t, db, adminSession, "email=friend%40example.com")
+	webCreateReq := httptest.NewRequest(http.MethodPost, "/admin/invites", strings.NewReader(webCreateBody))
+	webCreateReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	webCreateReq.AddCookie(&http.Cookie{Name: "skillsdex_session", Value: adminSession})
+	webCreateW := httptest.NewRecorder()
+	mux.ServeHTTP(webCreateW, webCreateReq)
+	if webCreateW.Code != http.StatusOK {
+		t.Fatalf("web create emailed invite = %d: %s", webCreateW.Code, webCreateW.Body.String())
+	}
+	if fakeMailer.to != "friend@example.com" || !strings.Contains(fakeMailer.inviteURL, "/signup?invite=") || fakeMailer.expiresAt.IsZero() {
+		t.Fatalf("invite email was not sent through fake mailer: %#v", fakeMailer)
+	}
+	if !strings.Contains(webCreateW.Body.String(), "Invite emailed to friend@example.com.") {
+		t.Fatalf("web create did not show email confirmation:\n%s", webCreateW.Body.String())
 	}
 
 	createReq := httptest.NewRequest(http.MethodPost, "/v1/invites", nil)
@@ -1314,7 +1348,14 @@ func TestSignupInviteWebAndAPI(t *testing.T) {
 	if err := json.Unmarshal(listW.Body.Bytes(), &list); err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Invites) == 0 || list.Invites[0].UsedBy != "octocat" || list.Invites[0].UsedAt == "" {
+	foundUsedInvite := false
+	for _, invite := range list.Invites {
+		if invite.UsedBy == "octocat" && invite.UsedAt != "" {
+			foundUsedInvite = true
+			break
+		}
+	}
+	if !foundUsedInvite {
 		t.Fatalf("invite list did not show used invite: %#v", list)
 	}
 }

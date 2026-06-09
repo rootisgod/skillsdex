@@ -204,6 +204,26 @@ For non-interactive use:
 PASSWORD='<new-long-password>' task prod:reset-admin-password
 ```
 
+Optional invite emails use Resend. Configure them with a systemd override instead of committing secrets:
+
+```bash
+sudo systemctl edit skillsdex
+```
+
+```ini
+[Service]
+Environment="SKILLSDEX_RESEND_API_KEY=re_xxxxxxxxx"
+Environment="SKILLSDEX_EMAIL_FROM=SkillsDex <invites@example.com>"
+Environment="SKILLSDEX_EMAIL_REPLY_TO=admin@example.com"
+```
+
+Replace `re_xxxxxxxxx` with the real Resend API key and use a sender address from a domain verified in Resend. `SKILLSDEX_EMAIL_REPLY_TO` is optional. Then reload and restart:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart skillsdex
+```
+
 Install and configure Caddy outside this project. Use `deploy/Caddyfile` as the starting point, replacing `skills.example.com` with the production hostname. Caddy should proxy to `127.0.0.1:8765`.
 
 ### Firewall

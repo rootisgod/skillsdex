@@ -310,7 +310,7 @@ Usage:
   skillsdex sets [set-slug] [--json]
   skillsdex install-set <set-slug> [--target codex] [--dry-run] [--yes|--no]
   skillsdex invites [--json]
-  skillsdex invites create [--json]
+  skillsdex invites create [--email EMAIL] [--json]
   skillsdex invites revoke <invite-id>
   skillsdex plugins [plugin-slug] [--target TARGET] [--json]
   skillsdex plugin add <slug> --name NAME --url URL --command COMMAND [--target TARGET] [--description TEXT]

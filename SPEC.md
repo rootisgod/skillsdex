@@ -232,7 +232,7 @@ skillsdex plugins [plugin-slug] [--target laptop]
 skillsdex plugin add <slug> --name <name> --url <url> --command <command> [--target laptop]
 skillsdex plugin install <slug> [--dry-run] [--yes|--no]
 skillsdex invites [--json]
-skillsdex invites create [--json]
+skillsdex invites create [--email user@example.com] [--json]
 skillsdex invites revoke <invite-id>
 skillsdex installed
 skillsdex sync
@@ -558,7 +558,7 @@ The first external blob store can be local filesystem, S3, R2, or similar. Even 
 
 For phase 1, usernames and owner slugs are immutable. Display names and email can change later, but changing namespace identifiers requires a deliberate redirect/alias design and is out of scope.
 
-Account creation is controlled by admins and invites. On first startup, if no users exist, create `admin` / `admin`. Admin users can create users directly and set/reset passwords from the web UI. Admins can also create one-time signup invites that expire after 24 hours. An invite authorizes signup by possession of the URL; the new user chooses their username and may add email as account metadata. Normal self-service password change can wait.
+Account creation is controlled by admins and invites. On first startup, if no users exist, create `admin` / `admin`. Admin users can create users directly and set/reset passwords from the web UI. Admins can also create one-time signup invites that expire after 24 hours and optionally email the signup URL through a configured transactional email provider. An invite authorizes signup by possession of the URL; the new user chooses their username and may add email as account metadata. Normal self-service password change can wait.
 
 Do not hard-delete users in phase 1. Deactivate users instead.
 
@@ -574,7 +574,7 @@ Do not hard-delete users in phase 1. Deactivate users instead.
 - `used_by`
 - `revoked_at`
 
-Signup invite tokens are shown only once as part of the signup URL. The database stores only a token hash and a short preview for identification. An invite can be used once, revoked by an admin, or expire after 24 hours.
+Signup invite tokens are shown only once as part of the signup URL. The database stores only a token hash and a short preview for identification. An invite can be used once, revoked by an admin, or expire after 24 hours. Invite email delivery is optional runtime configuration; API keys must come from the environment or host secret management, not from the database or source code.
 
 ### APIToken
 
@@ -929,6 +929,7 @@ The first useful release is complete when:
 - No forced password change for the default admin account in phase 1.
 - Admin web UI can create users and set/reset passwords.
 - Admin web UI and CLI can create one-time 24-hour signup invites.
+- Invite creation can optionally email the signup URL when transactional email is configured.
 - Invite signup lets users choose their username and optionally store email metadata.
 - Normal self-service password changes can wait.
 - Usernames and owner slugs are immutable in phase 1.

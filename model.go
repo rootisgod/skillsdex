@@ -25,9 +25,16 @@ type SignupInvite struct {
 }
 
 type SignupInviteCreateResult struct {
-	Invite SignupInvite `json:"invite"`
-	Token  string       `json:"token,omitempty"`
-	URL    string       `json:"url,omitempty"`
+	Invite     SignupInvite `json:"invite"`
+	Token      string       `json:"token,omitempty"`
+	URL        string       `json:"url,omitempty"`
+	EmailTo    string       `json:"email_to,omitempty"`
+	EmailID    string       `json:"email_id,omitempty"`
+	EmailError string       `json:"email_error,omitempty"`
+}
+
+type SignupInviteCreateRequest struct {
+	Email string `json:"email,omitempty"`
 }
 
 type Skill struct {

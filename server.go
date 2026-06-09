@@ -29,11 +29,12 @@ import (
 )
 
 type app struct {
-	db             *sql.DB
-	httpClient     httpDoer
-	trustedProxies []*net.IPNet
-	loginMu        sync.Mutex
-	loginFailures  map[string]loginAttempt
+	db                *sql.DB
+	httpClient        httpDoer
+	inviteEmailSender inviteEmailSender
+	trustedProxies    []*net.IPNet
+	loginMu           sync.Mutex
+	loginFailures     map[string]loginAttempt
 }
 
 var defaultSourceHTTPClient = &http.Client{Timeout: 30 * time.Second}
@@ -77,8 +78,12 @@ func runServe(addr, dbPath string, trustedProxyCIDRs []string) error {
 	if err != nil {
 		return err
 	}
+	inviteEmailSender, err := inviteEmailSenderFromEnv()
+	if err != nil {
+		return err
+	}
 
-	a := &app{db: db, trustedProxies: trustedProxies}
+	a := &app{db: db, trustedProxies: trustedProxies, inviteEmailSender: inviteEmailSender}
 	mux := http.NewServeMux()
 	a.routes(mux)
 	localURL := "http://127.0.0.1" + addr[strings.LastIndex(addr, ":"):]
@@ -212,6 +217,29 @@ func (a *app) signupURL(r *http.Request, token string) string {
 	q.Set("invite", token)
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+func (a *app) finishSignupInviteCreate(ctx context.Context, r *http.Request, result *SignupInviteCreateResult, emailTo string) error {
+	result.URL = a.signupURL(r, result.Token)
+	emailTo = strings.TrimSpace(emailTo)
+	if emailTo == "" {
+		return nil
+	}
+	if err := validateInviteEmailAddress(emailTo); err != nil {
+		return err
+	}
+	result.EmailTo = emailTo
+	if a.inviteEmailSender == nil {
+		result.EmailError = "invite email is not configured"
+		return nil
+	}
+	emailID, err := a.inviteEmailSender.SendInvite(ctx, emailTo, result.URL, result.Invite.ExpiresAt)
+	if err != nil {
+		result.EmailError = err.Error()
+		return nil
+	}
+	result.EmailID = emailID
+	return nil
 }
 
 func (a *app) handleCSS(w http.ResponseWriter, r *http.Request) {
@@ -784,20 +812,32 @@ func (a *app) handleAdminInvites(w http.ResponseWriter, r *http.Request) {
 		}
 		a.render(w, r, u, "Invites", invitesPage(invites, "", ""))
 	case http.MethodPost:
+		emailTo := strings.TrimSpace(r.FormValue("email"))
+		if emailTo != "" {
+			if err := validateInviteEmailAddress(emailTo); err != nil {
+				invites, _ := listSignupInvites(r.Context(), a.db)
+				a.render(w, r, u, "Invites", invitesPage(invites, "", err.Error()))
+				return
+			}
+		}
 		result, err := createSignupInvite(r.Context(), a.db, u.ID)
 		if err != nil {
 			invites, _ := listSignupInvites(r.Context(), a.db)
 			a.render(w, r, u, "Invites", invitesPage(invites, "", err.Error()))
 			return
 		}
-		result.URL = a.signupURL(r, result.Token)
-		a.audit(r, u, "signup_invite_created", "invite", result.Invite.ID, result.Invite.TokenPreview, map[string]any{"expires_at": result.Invite.ExpiresAt.Format(time.RFC3339)})
+		if err := a.finishSignupInviteCreate(r.Context(), r, &result, emailTo); err != nil {
+			invites, _ := listSignupInvites(r.Context(), a.db)
+			a.render(w, r, u, "Invites", invitesPage(invites, result.URL, err.Error()))
+			return
+		}
+		a.audit(r, u, "signup_invite_created", "invite", result.Invite.ID, result.Invite.TokenPreview, map[string]any{"expires_at": result.Invite.ExpiresAt.Format(time.RFC3339), "email_requested": result.EmailTo != "", "email_sent": result.EmailID != ""})
 		invites, err := listSignupInvites(r.Context(), a.db)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		a.render(w, r, u, "Invites", invitesPage(invites, result.URL, ""))
+		a.render(w, r, u, "Invites", invitesPage(invites, result.URL, signupInviteCreateMessage(result)))
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -1907,13 +1947,27 @@ func (a *app) handleAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			writeJSON(w, map[string]any{"invites": invites})
 		case http.MethodPost:
+			var in SignupInviteCreateRequest
+			if err := json.NewDecoder(io.LimitReader(r.Body, maxRequestBodyBytes+1)).Decode(&in); err != nil && !errors.Is(err, io.EOF) {
+				writeJSONError(w, http.StatusBadRequest, "invalid json")
+				return
+			}
+			if strings.TrimSpace(in.Email) != "" {
+				if err := validateInviteEmailAddress(in.Email); err != nil {
+					writeJSONError(w, http.StatusBadRequest, err.Error())
+					return
+				}
+			}
 			result, err := createSignupInvite(r.Context(), a.db, u.ID)
 			if err != nil {
 				writeJSONError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			result.URL = a.signupURL(r, result.Token)
-			a.audit(r, u, "signup_invite_created", "invite", result.Invite.ID, result.Invite.TokenPreview, map[string]any{"expires_at": result.Invite.ExpiresAt.Format(time.RFC3339), "api": true})
+			if err := a.finishSignupInviteCreate(r.Context(), r, &result, in.Email); err != nil {
+				writeJSONError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			a.audit(r, u, "signup_invite_created", "invite", result.Invite.ID, result.Invite.TokenPreview, map[string]any{"expires_at": result.Invite.ExpiresAt.Format(time.RFC3339), "api": true, "email_requested": result.EmailTo != "", "email_sent": result.EmailID != ""})
 			writeJSON(w, result)
 		default:
 			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -2371,9 +2425,23 @@ func invitesPage(invites []SignupInvite, inviteURL, msg string) template.HTML {
 		b.WriteString(`<tr><td><code>` + html.EscapeString(invite.TokenPreview) + `</code><div class="muted">` + html.EscapeString(invite.ID) + `</div></td><td><span class="pill ` + html.EscapeString(status) + `">` + html.EscapeString(status) + `</span></td><td>` + invite.CreatedAt.Format("2006-01-02 15:04") + `</td><td>` + invite.ExpiresAt.Format("2006-01-02 15:04") + `</td><td>` + html.EscapeString(usedBy) + `</td><td>` + action + `</td></tr>`)
 	}
 	b.WriteString(`</tbody></table></section><aside class="panel sticky"><div class="panel-head"><div class="panel-icon">` + icon("key") + `</div><div><h2>New Invite</h2><p>Create a single-use signup link that expires in 24 hours.</p></div></div><form method="post" action="/admin/invites">
+		<label>Email invite <input name="email" type="email" autocomplete="email" placeholder="optional"></label>
 		<button type="submit">` + iconLabel("plus", "Create Invite") + `</button>
-	</form><div class="command-card"><span>CLI</span><pre>skillsdex invites create</pre></div></aside></div>`)
+	</form><div class="command-card"><span>CLI</span><pre>skillsdex invites create --email user@example.com</pre></div></aside></div>`)
 	return template.HTML(b.String())
+}
+
+func signupInviteCreateMessage(result SignupInviteCreateResult) string {
+	if result.EmailTo == "" {
+		return ""
+	}
+	if result.EmailID != "" {
+		return "Invite emailed to " + result.EmailTo + "."
+	}
+	if result.EmailError != "" {
+		return "Invite created, but email was not sent: " + result.EmailError
+	}
+	return ""
 }
 
 func signupInviteStatus(invite SignupInvite) string {
