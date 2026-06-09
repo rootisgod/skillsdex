@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"net/url"
 	"path"
 	"regexp"
 	"strconv"
@@ -83,6 +84,114 @@ func validateSlug(kind, value string) error {
 		return fmt.Errorf("%s must use lowercase letters, numbers, and dashes, and start with a letter or number", kind)
 	}
 	return nil
+}
+
+func validatePluginInstallInput(in PluginInstallInput) error {
+	if err := validateSlug("plugin slug", strings.TrimSpace(in.Slug)); err != nil {
+		return err
+	}
+	if strings.TrimSpace(in.Name) == "" {
+		return errors.New("name is required")
+	}
+	if strings.TrimSpace(in.SourceURL) == "" {
+		return errors.New("source URL is required")
+	}
+	parsed, err := url.Parse(strings.TrimSpace(in.SourceURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return errors.New("source URL must be an absolute URL")
+	}
+	if parsed.Scheme != "https" {
+		return errors.New("source URL must use https")
+	}
+	if target := strings.TrimSpace(in.Target); target != "" {
+		if err := validateSlug("plugin target", target); err != nil {
+			return err
+		}
+	}
+	if _, err := parsePluginInstallCommand(in.InstallCommand); err != nil {
+		return err
+	}
+	return nil
+}
+
+func parsePluginInstallCommand(raw string) ([]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, errors.New("install command is required")
+	}
+	if len(raw) > 2048 {
+		return nil, errors.New("install command is too long")
+	}
+	var args []string
+	var b strings.Builder
+	var quote rune
+	escaped := false
+	hadToken := false
+	for _, r := range raw {
+		if escaped {
+			b.WriteRune(r)
+			hadToken = true
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			hadToken = true
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+				hadToken = true
+				continue
+			}
+			b.WriteRune(r)
+			hadToken = true
+			continue
+		}
+		if r == '\'' || r == '"' {
+			quote = r
+			hadToken = true
+			continue
+		}
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			if hadToken {
+				args = append(args, b.String())
+				b.Reset()
+				hadToken = false
+			}
+			continue
+		}
+		b.WriteRune(r)
+		hadToken = true
+	}
+	if escaped {
+		return nil, errors.New("install command has trailing escape")
+	}
+	if quote != 0 {
+		return nil, errors.New("install command has unterminated quote")
+	}
+	if hadToken {
+		args = append(args, b.String())
+	}
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+		return nil, errors.New("install command is required")
+	}
+	if isShellCommandName(args[0]) {
+		return nil, errors.New("install command must not invoke a shell")
+	}
+	return args, nil
+}
+
+func isShellCommandName(command string) bool {
+	command = strings.ToLower(strings.TrimSpace(command))
+	command = path.Base(strings.ReplaceAll(command, "\\", "/"))
+	switch command {
+	case "sh", "bash", "zsh", "fish", "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseTagList(raw string) []string {

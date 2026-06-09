@@ -228,6 +228,9 @@ skillsdex skills
 skillsdex show <owner>/<slug>
 skillsdex install <owner>/<slug> --target codex
 skillsdex install-defaults --target codex
+skillsdex plugins [plugin-slug] [--target laptop]
+skillsdex plugin add <slug> --name <name> --url <url> --command <command> [--target laptop]
+skillsdex plugin install <slug> [--dry-run] [--yes|--no]
 skillsdex installed
 skillsdex sync
 skillsdex uninstall <owner>/<slug> --target codex
@@ -904,6 +907,7 @@ The first useful release is complete when:
 - Archived skills are hidden by default with a show-archived toggle.
 - Do not hard-delete users or skills in phase 1; deactivate/archive instead.
 - CLI installs one skill at a time and can install skills marked as recommended defaults in one command.
+- CLI tracks desired plugin install commands and can run them locally with confirmation, without invoking a shell.
 - Interactive CLI prompts before overwriting unmanaged files.
 - Non-interactive CLI fails on unmanaged overwrite unless a future force flag is used.
 

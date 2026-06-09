@@ -198,6 +198,27 @@ Install dry-runs list the package files that would be written, including executa
 
 Executable flags are preserved for supporting files, but SkillsDex does not execute package scripts. New executable supporting files require confirmation unless you pass `--yes`; use `--no` to decline without prompting.
 
+## Plugin Install Tracking
+
+SkillsDex does not package or sync Codex plugins yet. It can track plugin install commands centrally so each machine can run the required install command locally.
+
+```bash
+./skillsdex plugin add codex-autoresearch \
+  --name "Codex Autoresearch" \
+  --url https://github.com/TheGreenCedar/codex-autoresearch \
+  --target laptop \
+  --command "codex plugin install https://github.com/TheGreenCedar/codex-autoresearch"
+
+./skillsdex plugins --target laptop
+./skillsdex plugins codex-autoresearch
+./skillsdex plugin install codex-autoresearch --dry-run
+./skillsdex plugin install codex-autoresearch --yes
+```
+
+`plugin install` executes the stored command on the local machine without invoking a shell. It previews the exact command with `--dry-run` and otherwise requires an interactive confirmation or `--yes`. Shell wrapper commands such as `sh`, `bash`, `zsh`, `cmd`, and PowerShell are rejected when tracking a plugin.
+
+Plugin repositories that also contain a normal Codex skill can still be imported as skills by pointing at the nested skill folder. For example, `codex-autoresearch` includes `plugins/codex-autoresearch/skills/codex-autoresearch/SKILL.md`, which can be imported separately from the plugin install tracking record.
+
 Sync managed installs:
 
 ```bash
@@ -423,11 +444,11 @@ Create and manage collections in the web app under `Collections`, then install o
 
 Current context:
 
-- Phase 1 implementation is in place as one `skillsdex` binary.
+- Phase 1 implementation is in place with `skillsdex` as the CLI and `skillsdexd` as the server.
 - The default starter skill library is seeded into the `admin` namespace.
 - The web UI has been redesigned for clearer navigation, denser skill browsing, better install guidance, and light/dark themes.
 - GitHub and agentskill.sh imports are available in the web app and CLI, including agentskill.sh search and Top 100 browsing.
-- Setup guidance, `skillsdex setup`, named install sets, CLI public search/import/new/publish/mark, CLI dry-runs, overwrite flags, source refresh, `doctor` health checks, and quality signals are available.
+- Setup guidance, `skillsdex setup`, named install sets, plugin install tracking, CLI public search/import/new/publish/mark, CLI dry-runs, overwrite flags, source refresh, `doctor` health checks, and quality signals are available.
 - Quality signals are available in the web app and from `skillsdex lint`, including `--strict` and `--json` for scripts.
 - SkillsDex stores full skill packages, including `SKILL.md` plus supporting files, and the web editor, API, CLI install/sync/uninstall path, web previews/diffs, backup restore, GitHub import, and GitHub export preserve those package files.
 - Skill package writes are bounded: 16 MiB per request/package, 1 MiB per file, supported UTF-8 text file types only, 1,000 skills per user, 100 revisions per skill, 256 MiB stored skill bytes per user, and a 1 GiB SQLite database guardrail.

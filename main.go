@@ -141,6 +141,16 @@ func RunCLI(args []string) int {
 			fmt.Fprintf(os.Stderr, "sets: %v\n", err)
 			return 1
 		}
+	case "plugins":
+		if err := runPlugins(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "plugins: %v\n", err)
+			return 1
+		}
+	case "plugin":
+		if err := runPlugin(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "plugin: %v\n", err)
+			return 1
+		}
 	case "install-set":
 		if err := runInstallSet(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "install-set: %v\n", err)
@@ -294,6 +304,9 @@ Usage:
   skillsdex install-pinned [--target codex] [--dry-run] [--yes|--no]
   skillsdex sets [set-slug] [--json]
   skillsdex install-set <set-slug> [--target codex] [--dry-run] [--yes|--no]
+  skillsdex plugins [plugin-slug] [--target TARGET] [--json]
+  skillsdex plugin add <slug> --name NAME --url URL --command COMMAND [--target TARGET] [--description TEXT]
+  skillsdex plugin install <slug> [--dry-run] [--yes|--no]
   skillsdex installed [--strict] [--refresh] [--json]
   skillsdex sync [--dry-run] [--strict] [--json] [--yes|--no]
   skillsdex uninstall <owner>/<slug> [--target codex] [--yes|--no]

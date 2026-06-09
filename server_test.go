@@ -1136,6 +1136,77 @@ func TestInstallSetWebAndAPI(t *testing.T) {
 	}
 }
 
+func TestPluginInstallAPI(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := createAPIToken(ctx, db, admin.ID, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a := &app{db: db}
+	mux := http.NewServeMux()
+	a.routes(mux)
+
+	body := `{"slug":"codex-autoresearch","name":"Codex Autoresearch","description":"Measured loops","source_url":"https://github.com/TheGreenCedar/codex-autoresearch","target":"laptop","install_command":"codex plugin install https://github.com/TheGreenCedar/codex-autoresearch"}`
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/plugins", strings.NewReader(body))
+	createReq.Header.Set("Authorization", "Bearer "+token)
+	createReq.Header.Set("Content-Type", "application/json")
+	createW := httptest.NewRecorder()
+	mux.ServeHTTP(createW, createReq)
+	if createW.Code != http.StatusOK {
+		t.Fatalf("create plugin = %d: %s", createW.Code, createW.Body.String())
+	}
+	var createPayload pluginResponse
+	if err := json.Unmarshal(createW.Body.Bytes(), &createPayload); err != nil {
+		t.Fatal(err)
+	}
+	if createPayload.Plugin.Slug != "codex-autoresearch" || createPayload.Plugin.Target != "laptop" {
+		t.Fatalf("unexpected create payload: %#v", createPayload)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/v1/plugins?target=laptop", nil)
+	listReq.Header.Set("Authorization", "Bearer "+token)
+	listW := httptest.NewRecorder()
+	mux.ServeHTTP(listW, listReq)
+	if listW.Code != http.StatusOK {
+		t.Fatalf("list plugins = %d: %s", listW.Code, listW.Body.String())
+	}
+	var listPayload pluginsResponse
+	if err := json.Unmarshal(listW.Body.Bytes(), &listPayload); err != nil {
+		t.Fatal(err)
+	}
+	if len(listPayload.Plugins) != 1 || listPayload.Plugins[0].Slug != "codex-autoresearch" {
+		t.Fatalf("unexpected list payload: %#v", listPayload)
+	}
+
+	showReq := httptest.NewRequest(http.MethodGet, "/v1/plugins/codex-autoresearch", nil)
+	showReq.Header.Set("Authorization", "Bearer "+token)
+	showW := httptest.NewRecorder()
+	mux.ServeHTTP(showW, showReq)
+	if showW.Code != http.StatusOK {
+		t.Fatalf("show plugin = %d: %s", showW.Code, showW.Body.String())
+	}
+
+	badReq := httptest.NewRequest(http.MethodPost, "/v1/plugins", strings.NewReader(`{"slug":"bad","name":"Bad","source_url":"https://example.com/plugin","install_command":"bash -lc echo"}`))
+	badReq.Header.Set("Authorization", "Bearer "+token)
+	badReq.Header.Set("Content-Type", "application/json")
+	badW := httptest.NewRecorder()
+	mux.ServeHTTP(badW, badReq)
+	if badW.Code != http.StatusBadRequest || !strings.Contains(badW.Body.String(), "must not invoke a shell") {
+		t.Fatalf("bad plugin = %d body %s", badW.Code, badW.Body.String())
+	}
+}
+
 func TestSkillAPIIncludesSupportingFiles(t *testing.T) {
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
 	if err != nil {

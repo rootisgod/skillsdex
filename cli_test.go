@@ -2167,6 +2167,97 @@ func TestRunSetsListsAndShowsInstallSets(t *testing.T) {
 	}
 }
 
+func TestRunPluginsTracksListsAndDryRunsInstall(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
+
+	pluginJSON := `{"plugin":{"id":"plg_1","slug":"codex-autoresearch","name":"Codex Autoresearch","description":"Measured loops","source_url":"https://github.com/TheGreenCedar/codex-autoresearch","target":"laptop","install_command":"codex plugin install https://github.com/TheGreenCedar/codex-autoresearch","created_at":"2026-06-08T00:00:00Z","updated_at":"2026-06-08T01:02:00Z"}}`
+	var sawAdd, sawList, sawShow bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/plugins":
+			sawAdd = true
+			var in PluginInstallInput
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+				t.Fatal(err)
+			}
+			if in.Slug != "codex-autoresearch" || in.Target != "laptop" || !strings.Contains(in.InstallCommand, "codex plugin install") {
+				t.Fatalf("unexpected plugin input: %#v", in)
+			}
+			_, _ = w.Write([]byte(pluginJSON))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/plugins":
+			sawList = true
+			if got := r.URL.Query().Get("target"); got != "laptop" {
+				t.Fatalf("target query = %q, want laptop", got)
+			}
+			_, _ = w.Write([]byte(`{"plugins":[{"id":"plg_1","slug":"codex-autoresearch","name":"Codex Autoresearch","description":"Measured loops","source_url":"https://github.com/TheGreenCedar/codex-autoresearch","target":"laptop","install_command":"codex plugin install https://github.com/TheGreenCedar/codex-autoresearch","created_at":"2026-06-08T00:00:00Z","updated_at":"2026-06-08T01:02:00Z"}]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/plugins/codex-autoresearch":
+			sawShow = true
+			_, _ = w.Write([]byte(pluginJSON))
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+	if err := saveAuth(AuthConfig{ServerURL: server.URL, Token: "test-token"}); err != nil {
+		t.Fatal(err)
+	}
+
+	addOut, err := captureStdout(t, func() error {
+		return runPlugin([]string{"add", "codex-autoresearch", "--name", "Codex Autoresearch", "--url", "https://github.com/TheGreenCedar/codex-autoresearch", "--target", "laptop", "--command", "codex plugin install https://github.com/TheGreenCedar/codex-autoresearch"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(addOut, "Tracked plugin codex-autoresearch") {
+		t.Fatalf("add output missing tracked message:\n%s", addOut)
+	}
+
+	listOut, err := captureStdout(t, func() error {
+		return runPlugins([]string{"--target", "laptop"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"SLUG", "codex-autoresearch", "laptop", "codex plugin install"} {
+		if !strings.Contains(listOut, want) {
+			t.Fatalf("plugins list output missing %q:\n%s", want, listOut)
+		}
+	}
+
+	showOut, err := captureStdout(t, func() error {
+		return runPlugins([]string{"codex-autoresearch"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Plugin: codex-autoresearch", "Source:", "Install command:"} {
+		if !strings.Contains(showOut, want) {
+			t.Fatalf("plugin show output missing %q:\n%s", want, showOut)
+		}
+	}
+
+	dryRunOut, err := captureStdout(t, func() error {
+		return runPlugin([]string{"install", "codex-autoresearch", "--dry-run"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Plugin: codex-autoresearch", "Command: codex plugin install", "Mode: dry run"} {
+		if !strings.Contains(dryRunOut, want) {
+			t.Fatalf("plugin dry-run output missing %q:\n%s", want, dryRunOut)
+		}
+	}
+	if !sawAdd || !sawList || !sawShow {
+		t.Fatalf("expected add/list/show requests, saw add=%v list=%v show=%v", sawAdd, sawList, sawShow)
+	}
+}
+
 func TestRunShowPrintsPackageFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

@@ -126,6 +126,19 @@ func migrate(db *sql.DB) error {
 			position INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY(set_id, skill_id)
 		);`,
+		`CREATE TABLE IF NOT EXISTS plugin_installs (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL REFERENCES users(id),
+			slug TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			source_url TEXT NOT NULL,
+			target TEXT NOT NULL DEFAULT '',
+			install_command TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			UNIQUE(user_id, slug)
+		);`,
 		`CREATE TABLE IF NOT EXISTS tags (
 			id TEXT PRIMARY KEY,
 			user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -156,6 +169,7 @@ func migrate(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_revisions_skill ON skill_revisions(skill_id, revision_number);`,
 		`CREATE INDEX IF NOT EXISTS idx_install_sets_user ON install_sets(user_id, updated_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_install_set_skills_set ON install_set_skills(set_id, position);`,
+		`CREATE INDEX IF NOT EXISTS idx_plugin_installs_user ON plugin_installs(user_id, target, updated_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_tags_user_slug ON tags(user_id, slug);`,
 		`CREATE INDEX IF NOT EXISTS idx_skill_tags_tag ON skill_tags(tag_id, skill_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_events_created ON audit_events(created_at DESC);`,
@@ -1164,6 +1178,9 @@ func deleteUser(ctx context.Context, db *sql.DB, id string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM install_sets WHERE user_id = ?`, id); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM plugin_installs WHERE user_id = ?`, id); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM skill_tags WHERE skill_id IN (SELECT id FROM skills WHERE owner_id = ?)`, id); err != nil {
 		return err
 	}
@@ -1457,6 +1474,70 @@ func listInstallSetSkills(ctx context.Context, db *sql.DB, userID, slug string) 
 		skills = append(skills, *s)
 	}
 	return set, skills, rows.Err()
+}
+
+func createPluginInstall(ctx context.Context, db *sql.DB, userID string, in PluginInstallInput) (*PluginInstall, error) {
+	if err := validatePluginInstallInput(in); err != nil {
+		return nil, err
+	}
+	now := nowUTC().Format(time.RFC3339)
+	id := newID("plg")
+	_, err := db.ExecContext(ctx, `INSERT INTO plugin_installs (id, user_id, slug, name, description, source_url, target, install_command, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, userID, strings.TrimSpace(in.Slug), strings.TrimSpace(in.Name), strings.TrimSpace(in.Description), strings.TrimSpace(in.SourceURL), strings.TrimSpace(in.Target), strings.TrimSpace(in.InstallCommand), now, now)
+	if err != nil {
+		return nil, err
+	}
+	return getPluginInstall(ctx, db, userID, in.Slug)
+}
+
+func listPluginInstalls(ctx context.Context, db *sql.DB, userID, target string) ([]PluginInstall, error) {
+	target = strings.TrimSpace(target)
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if target == "" {
+		rows, err = db.QueryContext(ctx, `SELECT id, user_id, slug, name, description, source_url, target, install_command, created_at, updated_at
+			FROM plugin_installs
+			WHERE user_id = ?
+			ORDER BY target, name`, userID)
+	} else {
+		rows, err = db.QueryContext(ctx, `SELECT id, user_id, slug, name, description, source_url, target, install_command, created_at, updated_at
+			FROM plugin_installs
+			WHERE user_id = ? AND target = ?
+			ORDER BY name`, userID, target)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var plugins []PluginInstall
+	for rows.Next() {
+		plugin, err := scanPluginInstall(rows)
+		if err != nil {
+			return nil, err
+		}
+		plugins = append(plugins, *plugin)
+	}
+	return plugins, rows.Err()
+}
+
+func getPluginInstall(ctx context.Context, db *sql.DB, userID, slug string) (*PluginInstall, error) {
+	row := db.QueryRowContext(ctx, `SELECT id, user_id, slug, name, description, source_url, target, install_command, created_at, updated_at
+		FROM plugin_installs
+		WHERE user_id = ? AND slug = ?`, userID, slug)
+	return scanPluginInstall(row)
+}
+
+func scanPluginInstall(row scanner) (*PluginInstall, error) {
+	var plugin PluginInstall
+	var created, updated string
+	if err := row.Scan(&plugin.ID, &plugin.UserID, &plugin.Slug, &plugin.Name, &plugin.Description, &plugin.SourceURL, &plugin.Target, &plugin.InstallCommand, &created, &updated); err != nil {
+		return nil, err
+	}
+	plugin.CreatedAt = parseTime(created)
+	plugin.UpdatedAt = parseTime(updated)
+	return &plugin, nil
 }
 
 func listSkills(ctx context.Context, db *sql.DB, userID string, includeArchived bool) ([]Skill, error) {

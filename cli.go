@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
@@ -45,6 +46,14 @@ type installSetResponse struct {
 
 type installSetsResponse struct {
 	Sets []InstallSet `json:"sets"`
+}
+
+type pluginResponse struct {
+	Plugin PluginInstall `json:"plugin"`
+}
+
+type pluginsResponse struct {
+	Plugins []PluginInstall `json:"plugins"`
 }
 
 type setupInstallMode string
@@ -235,6 +244,21 @@ type importSourceOptions struct {
 type setsOptions struct {
 	Slug string
 	JSON bool
+}
+
+type pluginsOptions struct {
+	Slug   string
+	Target string
+	JSON   bool
+}
+
+type pluginAddOptions struct {
+	Input PluginInstallInput
+}
+
+type pluginInstallOptions struct {
+	Slug    string
+	Confirm confirmOptions
 }
 
 type refreshResponse struct {
@@ -845,6 +869,14 @@ func shellQuote(value string) string {
 	return value
 }
 
+func shellJoin(argv []string) string {
+	quoted := make([]string, 0, len(argv))
+	for _, arg := range argv {
+		quoted = append(quoted, shellQuote(arg))
+	}
+	return strings.Join(quoted, " ")
+}
+
 func runRefresh(args []string) error {
 	target, all, apply, strict, showDiff, jsonOutput, confirm, err := parseRefreshArgs(args)
 	if err != nil {
@@ -1133,6 +1165,122 @@ func runSets(args []string) error {
 		fmt.Fprintf(tw, "%s/%s\t%s\t%d\t%s\n", skill.OwnerSlug, skill.Slug, skill.Name, skill.RevisionNumber, skill.UpdatedAt.Format("2006-01-02 15:04"))
 	}
 	return tw.Flush()
+}
+
+func runPlugins(args []string) error {
+	opts, err := parsePluginsArgs(args)
+	if err != nil {
+		return errors.New("usage: skillsdex plugins [plugin-slug] [--target TARGET] [--json]")
+	}
+	client, err := authenticatedClient()
+	if err != nil {
+		return err
+	}
+	if opts.Slug != "" {
+		resp, err := client.fetchPlugin(opts.Slug)
+		if err != nil {
+			return err
+		}
+		if opts.JSON {
+			return printJSON(resp)
+		}
+		printPlugin(resp.Plugin)
+		return nil
+	}
+	var resp pluginsResponse
+	path := "/v1/plugins"
+	if opts.Target != "" {
+		path += "?target=" + url.QueryEscape(opts.Target)
+	}
+	if err := client.getJSON(path, &resp); err != nil {
+		return err
+	}
+	if opts.JSON {
+		return printJSON(resp)
+	}
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SLUG\tNAME\tTARGET\tSOURCE\tCOMMAND")
+	for _, plugin := range resp.Plugins {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", plugin.Slug, plugin.Name, plugin.Target, plugin.SourceURL, plugin.InstallCommand)
+	}
+	return tw.Flush()
+}
+
+func runPlugin(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: skillsdex plugin (add|install) ...")
+	}
+	switch args[0] {
+	case "add":
+		opts, err := parsePluginAddArgs(args[1:])
+		if err != nil {
+			return errors.New("usage: skillsdex plugin add <slug> --name NAME --url URL --command COMMAND [--target TARGET] [--description TEXT]")
+		}
+		client, err := authenticatedClient()
+		if err != nil {
+			return err
+		}
+		var resp pluginResponse
+		if err := client.postJSON("/v1/plugins", opts.Input, &resp); err != nil {
+			return err
+		}
+		fmt.Printf("Tracked plugin %s: %s\n", resp.Plugin.Slug, resp.Plugin.Name)
+		if resp.Plugin.Target != "" {
+			fmt.Printf("Target: %s\n", resp.Plugin.Target)
+		}
+		fmt.Printf("Install command: %s\n", resp.Plugin.InstallCommand)
+		return nil
+	case "install":
+		opts, err := parsePluginInstallArgs(args[1:])
+		if err != nil {
+			return errors.New("usage: skillsdex plugin install <slug> [--dry-run] [--yes|--no]")
+		}
+		client, err := authenticatedClient()
+		if err != nil {
+			return err
+		}
+		resp, err := client.fetchPlugin(opts.Slug)
+		if err != nil {
+			return err
+		}
+		return runTrackedPluginInstall(resp.Plugin, opts.Confirm)
+	default:
+		return errors.New("usage: skillsdex plugin (add|install) ...")
+	}
+}
+
+func printPlugin(plugin PluginInstall) {
+	fmt.Printf("Plugin: %s\n", plugin.Slug)
+	fmt.Printf("Name: %s\n", plugin.Name)
+	if plugin.Target != "" {
+		fmt.Printf("Target: %s\n", plugin.Target)
+	}
+	if plugin.Description != "" {
+		fmt.Printf("Description: %s\n", plugin.Description)
+	}
+	fmt.Printf("Source: %s\n", plugin.SourceURL)
+	fmt.Printf("Install command: %s\n", plugin.InstallCommand)
+}
+
+func runTrackedPluginInstall(plugin PluginInstall, confirm confirmOptions) error {
+	argv, err := parsePluginInstallCommand(plugin.InstallCommand)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Plugin: %s\n", plugin.Slug)
+	fmt.Printf("Command: %s\n", shellJoin(argv))
+	if confirm.DryRun {
+		fmt.Println("Mode: dry run")
+		return nil
+	}
+	if err := requireConfirmation("Run plugin install command for "+plugin.Slug+"?", confirm); err != nil {
+		return err
+	}
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func printJSON(v any) error {
@@ -3385,6 +3533,12 @@ func (c *apiClient) fetchInstallSet(slug string) (installSetResponse, error) {
 	return resp, err
 }
 
+func (c *apiClient) fetchPlugin(slug string) (pluginResponse, error) {
+	var resp pluginResponse
+	err := c.getJSON("/v1/plugins/"+slug, &resp)
+	return resp, err
+}
+
 func (c *apiClient) refreshSkill(owner, slug string, dryRun bool) (refreshResponse, error) {
 	var resp refreshResponse
 	path := "/v1/skills/" + url.PathEscape(owner) + "/" + url.PathEscape(slug) + "/refresh"
@@ -4356,6 +4510,138 @@ func parseImportSourceArgs(args []string) (importSourceOptions, error) {
 	}
 	if !opts.Install && (opts.Target != "" || opts.Confirm.DryRun || opts.Confirm.Yes || opts.Confirm.No) {
 		return importSourceOptions{}, errors.New("--target, --dry-run, --yes, and --no require --install")
+	}
+	return opts, nil
+}
+
+func parsePluginsArgs(args []string) (pluginsOptions, error) {
+	var opts pluginsOptions
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			opts.JSON = true
+		case arg == "--target":
+			if i+1 >= len(args) {
+				return pluginsOptions{}, errors.New("missing target")
+			}
+			opts.Target = strings.TrimSpace(args[i+1])
+			i++
+		case strings.HasPrefix(arg, "--target="):
+			opts.Target = strings.TrimSpace(strings.TrimPrefix(arg, "--target="))
+		case strings.HasPrefix(arg, "-"):
+			return pluginsOptions{}, fmt.Errorf("unknown flag %s", arg)
+		default:
+			arg = strings.TrimSpace(arg)
+			if arg == "" {
+				return pluginsOptions{}, errors.New("empty plugin slug")
+			}
+			if opts.Slug != "" {
+				return pluginsOptions{}, errors.New("too many arguments")
+			}
+			opts.Slug = arg
+		}
+	}
+	if opts.Slug != "" {
+		if err := validateSlug("plugin slug", opts.Slug); err != nil {
+			return pluginsOptions{}, err
+		}
+	}
+	if opts.Target != "" {
+		if err := validateSlug("plugin target", opts.Target); err != nil {
+			return pluginsOptions{}, err
+		}
+	}
+	return opts, nil
+}
+
+func parsePluginAddArgs(args []string) (pluginAddOptions, error) {
+	var opts pluginAddOptions
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--name":
+			if i+1 >= len(args) {
+				return pluginAddOptions{}, errors.New("missing name")
+			}
+			opts.Input.Name = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--name="):
+			opts.Input.Name = strings.TrimPrefix(arg, "--name=")
+		case arg == "--description":
+			if i+1 >= len(args) {
+				return pluginAddOptions{}, errors.New("missing description")
+			}
+			opts.Input.Description = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--description="):
+			opts.Input.Description = strings.TrimPrefix(arg, "--description=")
+		case arg == "--url":
+			if i+1 >= len(args) {
+				return pluginAddOptions{}, errors.New("missing url")
+			}
+			opts.Input.SourceURL = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--url="):
+			opts.Input.SourceURL = strings.TrimPrefix(arg, "--url=")
+		case arg == "--target":
+			if i+1 >= len(args) {
+				return pluginAddOptions{}, errors.New("missing target")
+			}
+			opts.Input.Target = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--target="):
+			opts.Input.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--command":
+			if i+1 >= len(args) {
+				return pluginAddOptions{}, errors.New("missing command")
+			}
+			opts.Input.InstallCommand = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--command="):
+			opts.Input.InstallCommand = strings.TrimPrefix(arg, "--command=")
+		case strings.HasPrefix(arg, "-"):
+			return pluginAddOptions{}, fmt.Errorf("unknown flag %s", arg)
+		default:
+			if opts.Input.Slug != "" {
+				return pluginAddOptions{}, errors.New("too many arguments")
+			}
+			opts.Input.Slug = strings.TrimSpace(arg)
+		}
+	}
+	if err := validatePluginInstallInput(opts.Input); err != nil {
+		return pluginAddOptions{}, err
+	}
+	return opts, nil
+}
+
+func parsePluginInstallArgs(args []string) (pluginInstallOptions, error) {
+	var opts pluginInstallOptions
+	for _, arg := range args {
+		switch {
+		case arg == "--dry-run":
+			opts.Confirm.DryRun = true
+		case arg == "--yes" || arg == "-y":
+			opts.Confirm.Yes = true
+		case arg == "--no" || arg == "-n":
+			opts.Confirm.No = true
+		case strings.HasPrefix(arg, "-"):
+			return pluginInstallOptions{}, fmt.Errorf("unknown flag %s", arg)
+		default:
+			if opts.Slug != "" {
+				return pluginInstallOptions{}, errors.New("too many arguments")
+			}
+			opts.Slug = strings.TrimSpace(arg)
+		}
+	}
+	if opts.Slug == "" {
+		return pluginInstallOptions{}, errors.New("missing plugin slug")
+	}
+	if err := validateSlug("plugin slug", opts.Slug); err != nil {
+		return pluginInstallOptions{}, err
+	}
+	if opts.Confirm.Yes && opts.Confirm.No {
+		return pluginInstallOptions{}, errors.New("--yes and --no cannot be used together")
 	}
 	return opts, nil
 }

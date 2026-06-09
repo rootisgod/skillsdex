@@ -1,6 +1,7 @@
 package skillsdex
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -28,6 +29,23 @@ func TestBodyFromSkillMarkdown(t *testing.T) {
 	raw := "---\nname: test\n---\n\n# Body\n"
 	if got := bodyFromSkillMarkdown(raw); got != "# Body\n" {
 		t.Fatalf("body = %q", got)
+	}
+}
+
+func TestParsePluginInstallCommand(t *testing.T) {
+	args, err := parsePluginInstallCommand(`codex plugin install "https://github.com/TheGreenCedar/codex-autoresearch"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"codex", "plugin", "install", "https://github.com/TheGreenCedar/codex-autoresearch"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+	if _, err := parsePluginInstallCommand(`bash -lc "echo unsafe"`); err == nil || !strings.Contains(err.Error(), "must not invoke a shell") {
+		t.Fatalf("shell command err = %v, want shell refusal", err)
+	}
+	if _, err := parsePluginInstallCommand(`codex plugin install "unterminated`); err == nil || !strings.Contains(err.Error(), "unterminated quote") {
+		t.Fatalf("unterminated err = %v, want quote refusal", err)
 	}
 }
 

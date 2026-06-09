@@ -96,6 +96,28 @@ type InstallSet struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+type PluginInstall struct {
+	ID             string    `json:"id"`
+	UserID         string    `json:"-"`
+	Slug           string    `json:"slug"`
+	Name           string    `json:"name"`
+	Description    string    `json:"description"`
+	SourceURL      string    `json:"source_url"`
+	Target         string    `json:"target,omitempty"`
+	InstallCommand string    `json:"install_command"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+type PluginInstallInput struct {
+	Slug           string `json:"slug"`
+	Name           string `json:"name"`
+	Description    string `json:"description"`
+	SourceURL      string `json:"source_url"`
+	Target         string `json:"target"`
+	InstallCommand string `json:"install_command"`
+}
+
 type AuditEvent struct {
 	ID            string
 	ActorUserID   string

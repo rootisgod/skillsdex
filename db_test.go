@@ -153,6 +153,68 @@ func TestInstallSetsAreScopedAndValidateMembership(t *testing.T) {
 	}
 }
 
+func TestPluginInstallsAreScopedAndValidated(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	admin, err := getUserByUsername(ctx, db, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := createUser(ctx, db, "alice", "", "secret-123456", false); err != nil {
+		t.Fatal(err)
+	}
+	alice, err := getUserByUsername(ctx, db, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plugin, err := createPluginInstall(ctx, db, admin.ID, PluginInstallInput{
+		Slug:           "codex-autoresearch",
+		Name:           "Codex Autoresearch",
+		Description:    "Measured research loops",
+		SourceURL:      "https://github.com/TheGreenCedar/codex-autoresearch",
+		Target:         "laptop",
+		InstallCommand: "codex plugin install https://github.com/TheGreenCedar/codex-autoresearch",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plugin.Slug != "codex-autoresearch" || plugin.Target != "laptop" {
+		t.Fatalf("unexpected plugin: %#v", plugin)
+	}
+	plugins, err := listPluginInstalls(ctx, db, admin.ID, "laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plugins) != 1 || plugins[0].Slug != plugin.Slug {
+		t.Fatalf("admin plugins = %#v", plugins)
+	}
+	if _, err := getPluginInstall(ctx, db, alice.ID, "codex-autoresearch"); !isNotFound(err) {
+		t.Fatalf("alice should not read admin plugin, err=%v", err)
+	}
+	if _, err := createPluginInstall(ctx, db, admin.ID, PluginInstallInput{
+		Slug:           "bad-shell",
+		Name:           "Bad Shell",
+		SourceURL:      "https://example.com/plugin",
+		InstallCommand: "sh -c 'echo unsafe'",
+	}); err == nil || !strings.Contains(err.Error(), "must not invoke a shell") {
+		t.Fatalf("shell command err = %v, want shell refusal", err)
+	}
+	if _, err := createPluginInstall(ctx, db, admin.ID, PluginInstallInput{
+		Slug:           "bad-url",
+		Name:           "Bad URL",
+		SourceURL:      "http://example.com/plugin",
+		InstallCommand: "codex plugin install http://example.com/plugin",
+	}); err == nil || !strings.Contains(err.Error(), "https") {
+		t.Fatalf("http source err = %v, want https refusal", err)
+	}
+}
+
 func TestUserAccountHardening(t *testing.T) {
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
 	if err != nil {

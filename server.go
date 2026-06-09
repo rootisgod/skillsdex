@@ -1777,6 +1777,51 @@ func (a *app) handleAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"set": set, "skills": skills})
 		return
 	}
+	if path == "plugins" && r.Method == http.MethodGet {
+		target := strings.TrimSpace(r.URL.Query().Get("target"))
+		if target != "" {
+			if err := validateSlug("plugin target", target); err != nil {
+				writeJSONError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		}
+		plugins, err := listPluginInstalls(r.Context(), a.db, u.ID, target)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{"plugins": plugins})
+		return
+	}
+	if path == "plugins" && r.Method == http.MethodPost {
+		var in PluginInstallInput
+		if err := json.NewDecoder(io.LimitReader(r.Body, maxRequestBodyBytes+1)).Decode(&in); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		plugin, err := createPluginInstall(r.Context(), a.db, u.ID, in)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		a.audit(r, u, "api_plugin_tracked", "plugin", plugin.ID, plugin.Slug, map[string]any{"name": plugin.Name, "target": plugin.Target})
+		writeJSON(w, map[string]any{"plugin": plugin})
+		return
+	}
+	if strings.HasPrefix(path, "plugins/") && r.Method == http.MethodGet {
+		slug := strings.Trim(strings.TrimPrefix(path, "plugins/"), "/")
+		if slug == "" || strings.Contains(slug, "/") {
+			writeJSONError(w, http.StatusNotFound, "not found")
+			return
+		}
+		plugin, err := getPluginInstall(r.Context(), a.db, u.ID, slug)
+		if err != nil {
+			writeJSONError(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeJSON(w, map[string]any{"plugin": plugin})
+		return
+	}
 	if strings.HasPrefix(path, "skills/") {
 		a.handleSkillAPI(w, r, u, strings.TrimPrefix(path, "skills/"))
 		return
