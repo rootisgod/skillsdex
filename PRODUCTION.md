@@ -51,6 +51,9 @@ Keep the runbook below current whenever deployment commands, service layout, bac
 - SQLite runs in WAL mode. Seeing `skillsdex.db-wal` and `skillsdex.db-shm`
   beside the database while the service is active is expected.
 - Backups are written outside the live data directory, for example `/var/backups/skillsdex`.
+- Caddy's admin API should stay on loopback, access logs should be rotated
+  under `/var/log/caddy`, and direct origin requests should be blocked when the
+  hostname is proxied through Cloudflare.
 
 ### Initial Install
 
@@ -136,6 +139,17 @@ sudo systemctl restart skillsdex
 ```
 
 Install and configure Caddy outside this project. Use `deploy/Caddyfile` as the starting point, replacing `skills.example.com` with the production hostname. Caddy should proxy to `127.0.0.1:8765`.
+
+The example Caddyfile includes a Cloudflare origin gate. Keep the Cloudflare IP
+ranges current from `https://www.cloudflare.com/ips/`, or remove that matcher if
+the hostname is not proxied through Cloudflare. A host firewall allowlist for
+Cloudflare's IP ranges is an even stronger origin-protection layer when it is
+practical to automate.
+
+The example Caddyfile only uses directives compatible with the current
+production package. If the host is upgraded to Caddy v2.10 or newer, consider
+adding `request_body { max_size 16MB }` to reject oversized uploads at the proxy
+before they reach SkillsDex.
 
 ### Firewall
 
