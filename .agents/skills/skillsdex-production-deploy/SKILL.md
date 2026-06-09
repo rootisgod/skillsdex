@@ -137,7 +137,7 @@ Run a backup once and verify:
 
 ```bash
 ssh <host> 'sudo systemctl start skillsdex-backup.service && sudo systemctl status skillsdex-backup.service --no-pager'
-ssh <host> 'sudo find /var/backups/skillsdex -type f -name "skillsdex-*.db" -size +0 -print | tail -5'
+ssh <host> 'sudo find /var/backups/skillsdex -type f -name "skillsdex-*.zip" -size +0 -print | tail -5'
 ```
 
 ## Upgrade And Rollback

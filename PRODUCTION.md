@@ -285,7 +285,7 @@ skillsdex doctor --strict
 After configuring backups, confirm at least one SQLite backup exists and run an app-level restore dry-run:
 
 ```bash
-sudo test -s /var/backups/skillsdex/skillsdex-YYYYMMDDTHHMMSSZ.db
+sudo test -s /var/backups/skillsdex/skillsdex-YYYYMMDDTHHMMSSZ.zip
 skillsdex backup restore --file ./skillsdex-backup.zip --dry-run
 ```
 
@@ -296,12 +296,14 @@ Use two backup layers:
 1. **SQLite file backup** for full service recovery.
 2. **SkillsDex export zip** for app-level portability and restore dry-runs.
 
-For SQLite, prefer the SQLite online backup command when `sqlite3` is available:
+For SQLite, prefer the SQLite online backup command when `sqlite3` is available, then zip the copied database. The packaged backup script uses `zip` when available and falls back to Python's standard `zipfile` module:
 
 ```bash
 sudo install -d -m 0700 /var/backups/skillsdex
-sudo sqlite3 /var/lib/skillsdex/skillsdex.db \
-  ".backup '/var/backups/skillsdex/skillsdex-$(date -u +%Y%m%dT%H%M%SZ).db'"
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+sudo sqlite3 /var/lib/skillsdex/skillsdex.db ".backup '/var/backups/skillsdex/skillsdex-${stamp}.db'"
+sudo zip -q -9 -j "/var/backups/skillsdex/skillsdex-${stamp}.zip" "/var/backups/skillsdex/skillsdex-${stamp}.db"
+sudo rm -f "/var/backups/skillsdex/skillsdex-${stamp}.db"
 ```
 
 An optional systemd timer example is included:
@@ -325,7 +327,8 @@ task prod:backup-now
 Keep copies off-host. At minimum, verify that the backup file exists and is non-empty:
 
 ```bash
-sudo test -s /var/backups/skillsdex/skillsdex-YYYYMMDDTHHMMSSZ.db
+sudo test -s /var/backups/skillsdex/skillsdex-YYYYMMDDTHHMMSSZ.zip
+sudo unzip -l /var/backups/skillsdex/skillsdex-YYYYMMDDTHHMMSSZ.zip
 ```
 
 For app-level backup, create an API token in the web UI and run from a trusted admin machine:
@@ -351,7 +354,10 @@ Example:
 
 ```bash
 sudo systemctl stop skillsdex
-sudo install -o skillsdex -g skillsdex -m 0600 /var/backups/skillsdex/skillsdex-YYYYMMDDTHHMMSSZ.db /var/lib/skillsdex/skillsdex.db
+tmp="$(mktemp)"
+sudo unzip -p /var/backups/skillsdex/skillsdex-YYYYMMDDTHHMMSSZ.zip 'skillsdex-*.db' > "$tmp"
+sudo install -o skillsdex -g skillsdex -m 0600 "$tmp" /var/lib/skillsdex/skillsdex.db
+rm -f "$tmp"
 sudo systemctl start skillsdex
 sudo journalctl -u skillsdex -n 100 --no-pager
 ```
