@@ -12,7 +12,7 @@ StateDirectory=skillsdex
 StateDirectoryMode=0750
 Environment=SKILLSDEX_HOME=/var/lib/skillsdex
 UMask=0027
-ExecStart=/usr/local/bin/skillsdex serve --addr 127.0.0.1:8765 --db /var/lib/skillsdex/skillsdex.db --trusted-proxy 127.0.0.1
+ExecStart=/usr/local/bin/skillsdexd serve --addr 127.0.0.1:8765 --db /var/lib/skillsdex/skillsdex.db --trusted-proxy 127.0.0.1
 Restart=on-failure
 RestartSec=5s
 

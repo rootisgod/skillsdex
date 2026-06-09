@@ -58,23 +58,31 @@ jobs:
           for platform in $platforms; do
             goos="${platform%/*}"
             goarch="${platform#*/}"
-            binary_name="skillsdex-${goos}-${goarch}"
+            cli_binary_name="skillsdex-${goos}-${goarch}"
+            daemon_binary_name="skillsdexd-${goos}-${goarch}"
             if [ "$goos" = "windows" ]; then
-              binary_name="${binary_name}.exe"
+              cli_binary_name="${cli_binary_name}.exe"
+              daemon_binary_name="${daemon_binary_name}.exe"
             fi
 
-            echo "Building ${binary_name}..."
+            echo "Building ${cli_binary_name}..."
             CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
               -trimpath \
-              -ldflags="-s -w -X main.version=0.${RUN_NUMBER}" \
-              -o "dist/${binary_name}" .
+              -ldflags="-s -w -X skillsdex.version=0.${RUN_NUMBER}" \
+              -o "dist/${cli_binary_name}" ./cmd/skillsdex
+
+            echo "Building ${daemon_binary_name}..."
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
+              -trimpath \
+              -ldflags="-s -w -X skillsdex.version=0.${RUN_NUMBER}" \
+              -o "dist/${daemon_binary_name}" ./cmd/skillsdexd
           done
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
           name: binaries
-          path: dist/skillsdex-*
+          path: dist/*
           retention-days: 30
 
   release:
@@ -94,7 +102,7 @@ jobs:
         run: |
           set -eu
           cd release
-          for file in skillsdex-*; do
+          for file in skillsdex*; do
             sha256sum "$file" > "$file.sha256"
           done
 
@@ -111,11 +119,11 @@ jobs:
 
             ### Downloads
 
-            | Platform | Binary |
-            |----------|--------|
-            | macOS x86_64 | `skillsdex-darwin-amd64` |
-            | Linux x86_64 | `skillsdex-linux-amd64` |
-            | Windows x86_64 | `skillsdex-windows-amd64.exe` |
+            | Platform | CLI | Server |
+            |----------|-----|--------|
+            | macOS x86_64 | `skillsdex-darwin-amd64` | `skillsdexd-darwin-amd64` |
+            | Linux x86_64 | `skillsdex-linux-amd64` | `skillsdexd-linux-amd64` |
+            | Windows x86_64 | `skillsdex-windows-amd64.exe` | `skillsdexd-windows-amd64.exe` |
 
             ### Verify download
 

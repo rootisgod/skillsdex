@@ -37,8 +37,8 @@ Implementation tasks:
 
 Acceptance checks:
 
-- `skillsdex serve --addr 0.0.0.0:8765` fails when the default admin password is active.
-- `skillsdex serve --addr 127.0.0.1:8765` still works for local setup.
+- `skillsdexd serve --addr 0.0.0.0:8765` fails when the default admin password is active.
+- `skillsdexd serve --addr 127.0.0.1:8765` still works for local setup.
 - `skillsdex admin reset-password ...` sets a valid password and revokes prior access.
 
 ### 2. Reverse Proxy And TLS
@@ -146,9 +146,11 @@ Acceptance checks:
 Build and install the binary:
 
 ```bash
-go build -o skillsdex .
+go build -o skillsdex ./cmd/skillsdex
+go build -o skillsdexd ./cmd/skillsdexd
 id -u skillsdex >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/skillsdex --shell /usr/sbin/nologin skillsdex
 sudo install -m 0755 skillsdex /usr/local/bin/skillsdex
+sudo install -m 0755 skillsdexd /usr/local/bin/skillsdexd
 sudo install -m 0644 deploy/skillsdex.service /etc/systemd/system/skillsdex.service
 sudo systemctl daemon-reload
 ```
@@ -343,11 +345,13 @@ skillsdex backup restore --file ./skillsdex-backup.zip
 
 ### Upgrade
 
-Build or download the new binary, then replace it with a quick rollback copy:
+Build or download the new binaries, then replace them with quick rollback copies:
 
 ```bash
 sudo cp /usr/local/bin/skillsdex /usr/local/bin/skillsdex.previous
+sudo cp /usr/local/bin/skillsdexd /usr/local/bin/skillsdexd.previous
 sudo install -m 0755 ./skillsdex /usr/local/bin/skillsdex
+sudo install -m 0755 ./skillsdexd /usr/local/bin/skillsdexd
 sudo systemctl restart skillsdex
 sudo systemctl status skillsdex --no-pager
 ```
@@ -363,6 +367,7 @@ Check logs and the web login page. If the upgrade fails:
 
 ```bash
 sudo install -m 0755 /usr/local/bin/skillsdex.previous /usr/local/bin/skillsdex
+sudo install -m 0755 /usr/local/bin/skillsdexd.previous /usr/local/bin/skillsdexd
 sudo systemctl restart skillsdex
 ```
 

@@ -76,10 +76,11 @@ class Skillsdex < Formula
 
   def install
     bin.install "skillsdex"
+    bin.install "skillsdexd"
   end
 
   service do
-    run [opt_bin/"skillsdex", "serve", "--addr", "127.0.0.1:8765", "--db", var/"skillsdex/skillsdex.db"]
+    run [opt_bin/"skillsdexd", "serve", "--addr", "127.0.0.1:8765", "--db", var/"skillsdex/skillsdex.db"]
     keep_alive true
     log_path var/"log/skillsdex.log"
     error_log_path var/"log/skillsdex.log"

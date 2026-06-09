@@ -4,7 +4,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/skillsdex .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/skillsdexd ./cmd/skillsdexd
 
 FROM debian:bookworm-slim AS runtime
 
@@ -16,11 +16,11 @@ RUN apt-get update \
 	&& mkdir -p /data \
 	&& chown skillsdex:skillsdex /data
 
-COPY --from=build /out/skillsdex /usr/local/bin/skillsdex
+COPY --from=build /out/skillsdexd /usr/local/bin/skillsdexd
 
 ENV SKILLSDEX_HOME=/data
 EXPOSE 8765
 USER skillsdex
 
-ENTRYPOINT ["/usr/local/bin/skillsdex"]
+ENTRYPOINT ["/usr/local/bin/skillsdexd"]
 CMD ["serve", "--addr", "0.0.0.0:8765", "--db", "/data/skillsdex.db"]

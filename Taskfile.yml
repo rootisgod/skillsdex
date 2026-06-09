@@ -8,14 +8,15 @@ tasks:
     silent: true
 
   build:
-    desc: Build the skillsdex binary
+    desc: Build the skillsdex CLI and skillsdexd server binaries
     cmds:
-      - go build -o skillsdex .
+      - go build -o skillsdex ./cmd/skillsdex
+      - go build -o skillsdexd ./cmd/skillsdexd
 
   clean:
     desc: Remove local build artifacts
     cmds:
-      - rm -rf dist skillsdex
+      - rm -rf dist skillsdex skillsdexd
 
   release:
     desc: Build release archives for common platforms
@@ -30,7 +31,8 @@ tasks:
           arch="${target#*/}"
           out="dist/skillsdex-${version}-${os}-${arch}"
           mkdir -p "$out"
-          GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${version}" -o "$out/skillsdex" .
+          GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X skillsdex.version=${version}" -o "$out/skillsdex" ./cmd/skillsdex
+          GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X skillsdex.version=${version}" -o "$out/skillsdexd" ./cmd/skillsdexd
           cp README.md "$out/README.md"
           tar -C dist -czf "${out}.tar.gz" "$(basename "$out")"
         done
@@ -58,17 +60,19 @@ tasks:
       - docker build -t skillsdex:local .
 
   prod:build:
-    desc: Build the production Linux binary for this host
+    desc: Build the production Linux binaries for this host
     cmds:
-      - go build -trimpath -ldflags="-s -w" -o skillsdex .
+      - go build -trimpath -ldflags="-s -w" -o skillsdex ./cmd/skillsdex
+      - go build -trimpath -ldflags="-s -w" -o skillsdexd ./cmd/skillsdexd
 
   prod:build-linux-amd64:
-    desc: Build the production Linux amd64 binary for remote deployment
+    desc: Build the production Linux amd64 binaries for remote deployment
     cmds:
       - |
         set -eu
         mkdir -p dist
-        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/skillsdex-linux-amd64 .
+        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/skillsdex-linux-amd64 ./cmd/skillsdex
+        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/skillsdexd-linux-amd64 ./cmd/skillsdexd
 
   prod:deploy-binary:
     desc: Build, upload, and restart SkillsDex on the production server
@@ -78,24 +82,37 @@ tasks:
         set -eu
         remote="${PROD_HOST:-root@178.104.5.217}"
         key="${PROD_SSH_KEY:-$HOME/.ssh/ib_ssh}"
-        local_bin="${PROD_BINARY:-dist/skillsdex-linux-amd64}"
-        remote_tmp="/tmp/skillsdex.$(date -u +%Y%m%dT%H%M%SZ).new"
+        local_cli="${PROD_CLI_BINARY:-dist/skillsdex-linux-amd64}"
+        local_daemon="${PROD_DAEMON_BINARY:-dist/skillsdexd-linux-amd64}"
+        stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+        remote_cli_tmp="/tmp/skillsdex.${stamp}.new"
+        remote_daemon_tmp="/tmp/skillsdexd.${stamp}.new"
 
         ssh -i "$key" -o BatchMode=yes "$remote" 'set -eu; test "$(uname -m)" = "x86_64"; command -v systemctl >/dev/null; systemctl is-active --quiet skillsdex'
-        scp -i "$key" -q "$local_bin" "$remote:$remote_tmp"
+        scp -i "$key" -q "$local_cli" "$remote:$remote_cli_tmp"
+        scp -i "$key" -q "$local_daemon" "$remote:$remote_daemon_tmp"
         ssh -i "$key" -o BatchMode=yes "$remote" "set -eu
-          install -m 0755 '$remote_tmp' /usr/local/bin/skillsdex.next
-          rm -f '$remote_tmp'
+          install -m 0755 '$remote_cli_tmp' /usr/local/bin/skillsdex.next
+          install -m 0755 '$remote_daemon_tmp' /usr/local/bin/skillsdexd.next
+          rm -f '$remote_cli_tmp' '$remote_daemon_tmp'
           if [ -x /usr/local/bin/skillsdex ]; then
             cp /usr/local/bin/skillsdex /usr/local/bin/skillsdex.previous
           fi
+          if [ -x /usr/local/bin/skillsdexd ]; then
+            cp /usr/local/bin/skillsdexd /usr/local/bin/skillsdexd.previous
+          fi
           install -m 0755 /usr/local/bin/skillsdex.next /usr/local/bin/skillsdex
+          install -m 0755 /usr/local/bin/skillsdexd.next /usr/local/bin/skillsdexd
           rm -f /usr/local/bin/skillsdex.next
+          rm -f /usr/local/bin/skillsdexd.next
           rollback() {
             if [ -x /usr/local/bin/skillsdex.previous ]; then
               install -m 0755 /usr/local/bin/skillsdex.previous /usr/local/bin/skillsdex
-              systemctl restart skillsdex || true
             fi
+            if [ -x /usr/local/bin/skillsdexd.previous ]; then
+              install -m 0755 /usr/local/bin/skillsdexd.previous /usr/local/bin/skillsdexd
+            fi
+            systemctl restart skillsdex || true
           }
           if ! systemctl restart skillsdex; then
             rollback
@@ -118,13 +135,14 @@ tasks:
         "
 
   prod:install-service:
-    desc: Install the SkillsDex systemd service and binary
+    desc: Install the SkillsDex systemd service and binaries
     cmds:
       - task prod:build
       - |
         set -eu
         id -u skillsdex >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/skillsdex --shell /usr/sbin/nologin skillsdex
         sudo install -m 0755 skillsdex /usr/local/bin/skillsdex
+        sudo install -m 0755 skillsdexd /usr/local/bin/skillsdexd
         sudo install -m 0644 deploy/skillsdex.service /etc/systemd/system/skillsdex.service
         sudo systemctl daemon-reload
         sudo systemctl enable --now skillsdex
@@ -197,7 +215,7 @@ tasks:
           for pid in $pids; do
             args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
             case "$args" in
-              *"skillsdex serve"*)
+              *"skillsdexd serve"*)
                 echo "SkillsDex is already running on ${url}."
                 open "$url"
                 exit 0
@@ -207,7 +225,7 @@ tasks:
           echo "Port ${port} is already in use by another process."
           exit 1
         fi
-        ./skillsdex serve --addr 127.0.0.1:8765 >"$log" 2>&1 &
+        ./skillsdexd serve --addr 127.0.0.1:8765 >"$log" 2>&1 &
         pid="$!"
         for _ in 1 2 3 4 5 6 7 8 9 10; do
           if curl -fsS "$url" >/dev/null 2>&1; then
@@ -237,18 +255,18 @@ tasks:
         for pid in $pids; do
           args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
           case "$args" in
-            *"skillsdex serve"*)
+            *"skillsdexd serve"*)
               echo "Killing skillsdex server PID ${pid} on port ${port}"
               /bin/kill "$pid"
               killed=1
               ;;
             *)
-              echo "Skipping PID ${pid}; not a skillsdex serve process: ${args}"
+              echo "Skipping PID ${pid}; not a skillsdexd serve process: ${args}"
               ;;
           esac
         done
         if [ "$killed" -eq 0 ]; then
-          echo "No skillsdex serve process found on port ${port}."
+          echo "No skillsdexd serve process found on port ${port}."
         fi
 
   test:

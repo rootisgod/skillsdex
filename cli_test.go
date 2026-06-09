@@ -1,4 +1,4 @@
-package main
+package skillsdex
 
 import (
 	"archive/zip"
@@ -67,6 +67,40 @@ func withStdin(t *testing.T, input string, fn func() error) error {
 		_ = r.Close()
 	}()
 	return fn()
+}
+
+func TestBinaryEntryPointsReportVersion(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		if code := RunCLI([]string{"version"}); code != 0 {
+			t.Fatalf("RunCLI version exit code = %d, want 0", code)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != version {
+		t.Fatalf("RunCLI version output = %q, want %q", strings.TrimSpace(out), version)
+	}
+
+	out, err = captureStdout(t, func() error {
+		if code := RunDaemon([]string{"version"}); code != 0 {
+			t.Fatalf("RunDaemon version exit code = %d, want 0", code)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != version {
+		t.Fatalf("RunDaemon version output = %q, want %q", strings.TrimSpace(out), version)
+	}
+}
+
+func TestDaemonRejectsUnknownSubcommand(t *testing.T) {
+	if code := RunDaemon([]string{"unknown"}); code != 2 {
+		t.Fatalf("RunDaemon unknown exit code = %d, want 2", code)
+	}
 }
 
 func TestRunNewSkillScaffoldsTemplateFolder(t *testing.T) {

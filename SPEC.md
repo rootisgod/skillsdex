@@ -220,7 +220,7 @@ skillsdex
 Commands:
 
 ```bash
-skillsdex serve
+skillsdexd serve
 skillsdex login
 skillsdex logout
 skillsdex whoami
@@ -234,7 +234,7 @@ skillsdex uninstall <owner>/<slug> --target codex
 skillsdex doctor
 ```
 
-Phase 1 should be one Go binary with subcommands. `skillsdex serve` runs the local web app and API. The same binary also provides CLI install/sync commands.
+The user CLI binary is `skillsdex`. The server binary is `skillsdexd`; `skillsdexd serve` runs the local web app and API. The CLI provides install/sync commands.
 
 Target handling:
 
@@ -273,7 +273,7 @@ Default bind address:
 
 This intentionally binds to localhost by default. Public bind addresses must not be allowed while the default admin password is still active.
 
-On startup, `skillsdex serve` should:
+On startup, `skillsdexd serve` should:
 
 - create the SQLite database if missing
 - run migrations automatically
@@ -835,7 +835,7 @@ Use a Go server-rendered web app and API.
 
 Phase 1 should use:
 
-- one Go binary with subcommands
+- separate `skillsdex` CLI and `skillsdexd` server binaries
 - SQLite
 - email/password login for the web app
 - session cookies for web auth
@@ -845,7 +845,7 @@ Phase 1 should use:
 - no React/Next frontend
 - no Docker requirement
 
-The initial deployment target is local execution via `skillsdex serve`. Docker should remain easy later, but should not be required for phase 1 testing.
+The initial deployment target is local execution via `skillsdexd serve`. Docker should remain easy later, but should not be required for phase 1 testing.
 
 The CLI and web app are both part of phase 1: the CLI proves install/sync, and the web app provides the primary way to browse, create, and update skills.
 
@@ -853,7 +853,7 @@ The CLI and web app are both part of phase 1: the CLI proves install/sync, and t
 
 The first useful release is complete when:
 
-1. `skillsdex serve` starts the web app/API on `127.0.0.1:8765`.
+1. `skillsdexd serve` starts the web app/API on `127.0.0.1:8765`.
 2. First startup creates/migrates the SQLite database.
 3. First startup creates `admin` / `admin` if no users exist.
 4. A user can log into the web app.
@@ -882,9 +882,9 @@ The first useful release is complete when:
 
 ## Phase 1 Decisions
 
-- Product name and binary: `skillsdex`.
-- One Go binary with subcommands.
-- `skillsdex serve` runs the web app and API.
+- Product name: SkillsDex.
+- `skillsdex` is the CLI binary and `skillsdexd` is the server binary.
+- `skillsdexd serve` runs the web app and API.
 - Default server bind address: `127.0.0.1:8765`.
 - Local binary execution is the phase 1 deployment target.
 - Docker should be easy later, but is not part of phase 1.
@@ -917,8 +917,8 @@ The first useful release is complete when:
 
 Build the first implementation in this order:
 
-1. Create the single Go binary skeleton with subcommands.
-2. Implement `skillsdex serve`.
+1. Create the CLI and server binary skeletons.
+2. Implement `skillsdexd serve`.
 3. Create the SQLite schema and automatic migrations.
 4. Create the default `admin` / `admin` user if no users exist.
 5. Add web auth with sessions.

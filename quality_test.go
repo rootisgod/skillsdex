@@ -1,4 +1,4 @@
-package main
+package skillsdex
 
 import (
 	"strings"

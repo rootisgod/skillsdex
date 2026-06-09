@@ -7,7 +7,7 @@ src="${1:-./skillsdex}"
 
 if [ ! -f "$src" ]; then
   echo "skillsdex binary not found at: $src" >&2
-  echo "Build it first with: go build -o skillsdex ." >&2
+  echo "Build it first with: go build -o skillsdex ./cmd/skillsdex" >&2
   exit 1
 fi
 

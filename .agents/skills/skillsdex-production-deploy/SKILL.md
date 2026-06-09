@@ -73,7 +73,7 @@ Confirm:
 1. Build a Linux binary locally for the remote architecture.
 2. Upload binary and deploy files.
 3. Create the `skillsdex` system user if missing.
-4. Install `/usr/local/bin/skillsdex`.
+4. Install `/usr/local/bin/skillsdex` and `/usr/local/bin/skillsdexd`.
 5. Install `deploy/skillsdex.service`.
 6. Reload systemd and start the service.
 7. Reset the admin password before opening public traffic.
@@ -146,12 +146,13 @@ Before replacing the binary:
 
 ```bash
 ssh <host> 'sudo cp /usr/local/bin/skillsdex /usr/local/bin/skillsdex.previous'
+ssh <host> 'sudo cp /usr/local/bin/skillsdexd /usr/local/bin/skillsdexd.previous'
 ```
 
 After upload:
 
 ```bash
-ssh <host> 'sudo install -m 0755 ./skillsdex /usr/local/bin/skillsdex && sudo systemctl restart skillsdex && sudo systemctl status skillsdex --no-pager'
+ssh <host> 'sudo install -m 0755 ./skillsdex /usr/local/bin/skillsdex && sudo install -m 0755 ./skillsdexd /usr/local/bin/skillsdexd && sudo systemctl restart skillsdex && sudo systemctl status skillsdex --no-pager'
 ```
 
 From this repository, use the remote deployment task for the current production
@@ -164,7 +165,7 @@ task prod:deploy-binary
 Rollback:
 
 ```bash
-ssh <host> 'sudo install -m 0755 /usr/local/bin/skillsdex.previous /usr/local/bin/skillsdex && sudo systemctl restart skillsdex'
+ssh <host> 'sudo install -m 0755 /usr/local/bin/skillsdex.previous /usr/local/bin/skillsdex && sudo install -m 0755 /usr/local/bin/skillsdexd.previous /usr/local/bin/skillsdexd && sudo systemctl restart skillsdex'
 ```
 
 ## Recovery

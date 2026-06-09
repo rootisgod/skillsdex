@@ -2,7 +2,7 @@
 
 Private dotfiles for AI-agent skills.
 
-SkillsDex is a private hosted skill library plus CLI for syncing reusable Codex skills across machines. Phase 1 is a single Go binary named `skillsdex` with a server-rendered web app, JSON API, SQLite storage, and Codex install/sync support.
+SkillsDex is a private hosted skill library plus CLI for syncing reusable Codex skills across machines. The user CLI is `skillsdex`; the web app and JSON API run from the `skillsdexd` server binary with SQLite storage and Codex install/sync support.
 
 ## Quickstart
 
@@ -15,7 +15,7 @@ task build
 Start the web app and API:
 
 ```bash
-./skillsdex serve
+./skillsdexd serve
 ```
 
 Or build, start, and open the website in one step:
@@ -265,7 +265,7 @@ task kill
 Install a locally built binary:
 
 ```bash
-go build -o skillsdex .
+go build -o skillsdex ./cmd/skillsdex
 scripts/install.sh ./skillsdex
 ```
 
@@ -281,7 +281,10 @@ Run under systemd on a Linux host:
 
 ```bash
 id -u skillsdex >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/skillsdex --shell /usr/sbin/nologin skillsdex
+go build -o skillsdex ./cmd/skillsdex
+go build -o skillsdexd ./cmd/skillsdexd
 sudo install -m 0755 skillsdex /usr/local/bin/skillsdex
+sudo install -m 0755 skillsdexd /usr/local/bin/skillsdexd
 sudo install -m 0644 deploy/skillsdex.service /etc/systemd/system/skillsdex.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now skillsdex
@@ -308,7 +311,7 @@ internet -> Caddy :443/:80 -> skillsdex 127.0.0.1:8765
 
 Start from `deploy/Caddyfile`, replace the hostname, point DNS at the host, and expose only ports 80 and 443 publicly.
 
-Do not expose a fresh instance on a public bind while the default `admin/admin` password is active. `skillsdex serve` allows local loopback setup, but refuses public bind addresses until the admin password has been changed.
+Do not expose a fresh instance on a public bind while the default `admin/admin` password is active. `skillsdexd serve` allows local loopback setup, but refuses public bind addresses until the admin password has been changed.
 
 If the only admin password is lost, stop the service and reset it with local database access:
 
@@ -332,7 +335,7 @@ The release task writes platform archives under `dist/` and a `dist/SHA256SUMS` 
 cd dist && shasum -a 256 -c SHA256SUMS
 ```
 
-GitHub Actions also creates an automatic release for each push to `main`. The workflow tags releases as `v0.<run_number>` and uploads `skillsdex-darwin-amd64`, `skillsdex-linux-amd64`, `skillsdex-windows-amd64.exe`, plus matching `.sha256` files.
+GitHub Actions also creates an automatic release for each push to `main`. The workflow tags releases as `v0.<run_number>` and uploads paired `skillsdex-*` CLI and `skillsdexd-*` server binaries, plus matching `.sha256` files.
 
 Generate a Homebrew formula from the same release artifacts:
 
@@ -470,5 +473,6 @@ Equivalent core Go commands:
 ```bash
 go test ./...
 go vet ./...
-go build -o skillsdex .
+go build -o skillsdex ./cmd/skillsdex
+go build -o skillsdexd ./cmd/skillsdexd
 ```

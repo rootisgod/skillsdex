@@ -1,177 +1,203 @@
-package main
+package skillsdex
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 )
 
 var version = "0.1.0-phase1"
 
-func main() {
-	if len(os.Args) < 2 {
-		usage()
-		os.Exit(2)
+func RunCLI(args []string) int {
+	if len(args) < 1 {
+		cliUsage()
+		return 2
 	}
 
-	switch os.Args[1] {
+	switch args[0] {
 	case "serve":
-		fs := flag.NewFlagSet("serve", flag.ExitOnError)
-		addr := fs.String("addr", "127.0.0.1:8765", "listen address")
-		dbPath := fs.String("db", "", "SQLite database path")
-		var trustedProxies stringListFlag
-		fs.Var(&trustedProxies, "trusted-proxy", "trusted reverse proxy IP or CIDR for X-Forwarded-* headers; repeat or comma-separate")
-		_ = fs.Parse(os.Args[2:])
-		if err := runServe(*addr, *dbPath, trustedProxies); err != nil {
+		code, err := runDeprecatedServe(args[1:])
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "serve: %v\n", err)
-			os.Exit(1)
 		}
+		return code
 	case "login":
-		if err := runLogin(os.Args[2:]); err != nil {
+		if err := runLogin(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "login: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "logout":
 		if err := runLogout(); err != nil {
 			fmt.Fprintf(os.Stderr, "logout: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "whoami":
 		if err := runWhoami(); err != nil {
 			fmt.Fprintf(os.Stderr, "whoami: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "config":
-		if err := runConfig(os.Args[2:]); err != nil {
+		if err := runConfig(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "config: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "skills":
-		if err := runSkills(os.Args[2:]); err != nil {
+		if err := runSkills(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "skills: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "search":
-		if err := runPublicSearch(os.Args[2:]); err != nil {
+		if err := runPublicSearch(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "search: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "top":
-		if err := runPublicTop(os.Args[2:]); err != nil {
+		if err := runPublicTop(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "top: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "import-source":
-		if err := runImportSource(os.Args[2:]); err != nil {
+		if err := runImportSource(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "import-source: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "publish":
-		if err := runPublish(os.Args[2:]); err != nil {
+		if err := runPublish(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "publish: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "refresh":
-		if err := runRefresh(os.Args[2:]); err != nil {
+		if err := runRefresh(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "refresh: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "github":
-		if err := runGitHub(os.Args[2:]); err != nil {
+		if err := runGitHub(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "github: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "backup":
-		if err := runBackup(os.Args[2:]); err != nil {
+		if err := runBackup(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "backup: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "admin":
-		if err := runAdmin(os.Args[2:]); err != nil {
+		if err := runAdmin(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "admin: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "show":
-		if err := runShow(os.Args[2:]); err != nil {
+		if err := runShow(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "show: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "mark":
-		if err := runMark(os.Args[2:]); err != nil {
+		if err := runMark(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "mark: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "new":
-		if err := runNewSkill(os.Args[2:]); err != nil {
+		if err := runNewSkill(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "new: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "templates":
-		if err := runTemplates(os.Args[2:]); err != nil {
+		if err := runTemplates(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "templates: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "lint":
-		if err := runLint(os.Args[2:]); err != nil {
+		if err := runLint(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "lint: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "setup":
-		if err := runSetup(os.Args[2:]); err != nil {
+		if err := runSetup(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "setup: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "install":
-		if err := runInstall(os.Args[2:]); err != nil {
+		if err := runInstall(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "install: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "install-defaults":
-		if err := runInstallDefaults(os.Args[2:]); err != nil {
+		if err := runInstallDefaults(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "install-defaults: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "install-pinned":
-		if err := runInstallPinned(os.Args[2:]); err != nil {
+		if err := runInstallPinned(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "install-pinned: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "sets":
-		if err := runSets(os.Args[2:]); err != nil {
+		if err := runSets(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "sets: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "install-set":
-		if err := runInstallSet(os.Args[2:]); err != nil {
+		if err := runInstallSet(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "install-set: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "installed":
-		if err := runInstalledArgs(os.Args[2:]); err != nil {
+		if err := runInstalledArgs(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "installed: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "sync":
-		if err := runSync(os.Args[2:]); err != nil {
+		if err := runSync(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "sync: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "uninstall":
-		if err := runUninstall(os.Args[2:]); err != nil {
+		if err := runUninstall(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "uninstall: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "doctor":
-		if err := runDoctor(os.Args[2:]...); err != nil {
+		if err := runDoctor(args[1:]...); err != nil {
 			fmt.Fprintf(os.Stderr, "doctor: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	case "version", "--version", "-v":
 		fmt.Println(version)
 	default:
-		usage()
-		os.Exit(2)
+		cliUsage()
+		return 2
 	}
+	return 0
+}
+
+func RunDaemon(args []string) int {
+	if len(args) > 0 {
+		switch args[0] {
+		case "serve":
+			args = args[1:]
+		case "version", "--version", "-v":
+			fmt.Println(version)
+			return 0
+		case "help", "--help", "-h":
+			daemonUsage()
+			return 0
+		default:
+			if !strings.HasPrefix(args[0], "-") {
+				daemonUsage()
+				return 2
+			}
+		}
+	}
+	if err := runServeCommand(args); err != nil {
+		fmt.Fprintf(os.Stderr, "skillsdexd: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 type stringListFlag []string
@@ -185,11 +211,62 @@ func (f *stringListFlag) Set(value string) error {
 	return nil
 }
 
-func usage() {
+func runServeCommand(args []string) error {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	addr := fs.String("addr", "127.0.0.1:8765", "listen address")
+	dbPath := fs.String("db", "", "SQLite database path")
+	var trustedProxies stringListFlag
+	fs.Var(&trustedProxies, "trusted-proxy", "trusted reverse proxy IP or CIDR for X-Forwarded-* headers; repeat or comma-separate")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return runServe(*addr, *dbPath, trustedProxies)
+}
+
+func runDeprecatedServe(args []string) (int, error) {
+	daemonPath, err := findSkillsDexDaemon()
+	if err != nil {
+		return 127, err
+	}
+	fmt.Fprintln(os.Stderr, "skillsdex serve is deprecated; use skillsdexd serve instead.")
+	cmd := exec.Command(daemonPath, append([]string{"serve"}, args...)...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode(), nil
+		}
+		return 1, err
+	}
+	return 0, nil
+}
+
+func findSkillsDexDaemon() (string, error) {
+	if executable, err := os.Executable(); err == nil {
+		candidate := filepath.Join(filepath.Dir(executable), "skillsdexd")
+		if isExecutableFile(candidate) {
+			return candidate, nil
+		}
+	}
+	path, err := exec.LookPath("skillsdexd")
+	if err != nil {
+		return "", fmt.Errorf("skillsdexd not found; install the server binary and run `skillsdexd serve`")
+	}
+	return path, nil
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir() && info.Mode()&0111 != 0
+}
+
+func cliUsage() {
 	fmt.Fprintf(os.Stderr, `skillsdex %s
 
 Usage:
-  skillsdex serve [--addr ADDR] [--db PATH] [--trusted-proxy IP_OR_CIDR]
   skillsdex login [--server URL] [--token TOKEN|--token-stdin]
   skillsdex logout
   skillsdex whoami
@@ -221,5 +298,18 @@ Usage:
   skillsdex sync [--dry-run] [--strict] [--json] [--yes|--no]
   skillsdex uninstall <owner>/<slug> [--target codex] [--yes|--no]
   skillsdex doctor [--strict] [--refresh] [--fix-permissions] [--json]
+
+Server:
+  skillsdexd serve [--addr ADDR] [--db PATH] [--trusted-proxy IP_OR_CIDR]
+  skillsdex serve is deprecated and delegates to skillsdexd when available.
+`, version)
+}
+
+func daemonUsage() {
+	fmt.Fprintf(os.Stderr, `skillsdexd %s
+
+Usage:
+  skillsdexd serve [--addr ADDR] [--db PATH] [--trusted-proxy IP_OR_CIDR]
+  skillsdexd [--addr ADDR] [--db PATH] [--trusted-proxy IP_OR_CIDR]
 `, version)
 }
