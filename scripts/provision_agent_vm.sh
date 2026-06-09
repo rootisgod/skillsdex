@@ -330,28 +330,72 @@ install_agentskill() {
 
 configure_openrouter() {
   log "Configuring OpenRouter placeholders"
-  local codex_dir codex_config tmp env_file
+  local codex_dir codex_config tmp env_file opencode_dir opencode_config opencode_auth_example codex_model
+  codex_model="${OPENROUTER_CODEX_MODEL:-openrouter/free}"
   codex_dir="$HOME/.codex"
   codex_config="$codex_dir/config.toml"
+  opencode_dir="$HOME/.config/opencode"
+  opencode_config="$opencode_dir/opencode.json"
+  opencode_auth_example="$HOME/.local/share/opencode/auth.example.json"
   env_file="$HOME/.config/skillsdex-agent/env.example"
 
   if [ "$dry_run" -eq 1 ]; then
-    say "+ ensure $codex_config has an openrouter provider block"
+    say "+ ensure $codex_config uses OpenRouter with model $codex_model"
+    say "+ write $opencode_config with cheap/free OpenRouter model entries"
+    say "+ write $opencode_auth_example with placeholder OpenRouter credentials"
     say "+ write $env_file with placeholder environment variables"
     return 0
   fi
 
-  mkdir -p "$codex_dir" "$(dirname "$env_file")"
+  mkdir -p "$codex_dir" "$opencode_dir" "$(dirname "$opencode_auth_example")" "$(dirname "$env_file")"
   touch "$codex_config"
   chmod 0600 "$codex_config"
 
-  if ! grep -Eq '^[[:space:]]*model_provider[[:space:]]*=' "$codex_config"; then
+  if grep -Eq '^[[:space:]]*model[[:space:]]*=' "$codex_config"; then
+    tmp="$(mktemp)"
+    awk -v model="$codex_model" '
+      /^[[:space:]]*model[[:space:]]*=/ && !done { print "model = \"" model "\""; done=1; next }
+      { print }
+    ' "$codex_config" >"$tmp"
+    mv "$tmp" "$codex_config"
+  else
+    tmp="$(mktemp)"
+    {
+      printf '%s\n' "# Added by SkillsDex agent VM provisioner."
+      printf 'model = "%s"\n' "$codex_model"
+      cat "$codex_config"
+    } >"$tmp"
+    mv "$tmp" "$codex_config"
+  fi
+
+  if grep -Eq '^[[:space:]]*model_provider[[:space:]]*=' "$codex_config"; then
+    tmp="$(mktemp)"
+    awk '
+      /^[[:space:]]*model_provider[[:space:]]*=/ && !done { print "model_provider = \"openrouter\""; done=1; next }
+      { print }
+    ' "$codex_config" >"$tmp"
+    mv "$tmp" "$codex_config"
+  else
     tmp="$(mktemp)"
     {
       printf '%s\n' '# Added by SkillsDex agent VM provisioner.'
       printf '%s\n' 'model_provider = "openrouter"'
-      printf '%s\n' 'model_reasoning_effort = "high"'
-      printf '%s\n\n' 'model = "~openai/gpt-latest"'
+      cat "$codex_config"
+    } >"$tmp"
+    mv "$tmp" "$codex_config"
+  fi
+
+  if grep -Eq '^[[:space:]]*model_reasoning_effort[[:space:]]*=' "$codex_config"; then
+    tmp="$(mktemp)"
+    awk '
+      /^[[:space:]]*model_reasoning_effort[[:space:]]*=/ && !done { print "model_reasoning_effort = \"low\""; done=1; next }
+      { print }
+    ' "$codex_config" >"$tmp"
+    mv "$tmp" "$codex_config"
+  else
+    tmp="$(mktemp)"
+    {
+      printf '%s\n' 'model_reasoning_effort = "low"'
       cat "$codex_config"
     } >"$tmp"
     mv "$tmp" "$codex_config"
@@ -368,6 +412,33 @@ TOML
   fi
   chmod 0600 "$codex_config"
 
+  cat >"$opencode_config" <<'JSON'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "openrouter": {
+      "models": {
+        "openrouter/free": {},
+        "qwen/qwen3-coder:free": {},
+        "~anthropic/claude-haiku-latest": {}
+      }
+    }
+  },
+  "model": "openrouter/openrouter/free",
+  "small_model": "openrouter/openrouter/free"
+}
+JSON
+
+  cat >"$opencode_auth_example" <<'JSON'
+{
+  "openrouter": {
+    "type": "api",
+    "key": "sk-or-your-key-here"
+  }
+}
+JSON
+  chmod 0600 "$opencode_config" "$opencode_auth_example"
+
   cat >"$env_file" <<'ENV'
 # Copy the exports you want into your shell profile after creating real keys.
 # This file intentionally contains no secrets.
@@ -376,6 +447,18 @@ export OPENROUTER_API_KEY="sk-or-..."
 # Claude Code can be pointed at OpenRouter later if you choose that route.
 export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY"
 export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
+export ANTHROPIC_API_KEY=""
+
+# Cheap/free smoke-test models. Claude Code is only guaranteed through
+# OpenRouter with Anthropic-backed models, but openrouter/free is useful
+# when you explicitly want a zero-cost compatibility probe.
+export OPENROUTER_CODEX_MODEL="openrouter/free"
+export OPENROUTER_OPENCODE_MODEL="openrouter/openrouter/free"
+export OPENROUTER_CLAUDE_MODEL="openrouter/free"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="$OPENROUTER_CLAUDE_MODEL"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="$OPENROUTER_CLAUDE_MODEL"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="$OPENROUTER_CLAUDE_MODEL"
+export CLAUDE_CODE_SUBAGENT_MODEL="$OPENROUTER_CLAUDE_MODEL"
 ENV
   chmod 0600 "$env_file"
 }
