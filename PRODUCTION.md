@@ -151,6 +151,26 @@ production package. If the host is upgraded to Caddy v2.10 or newer, consider
 adding `request_body { max_size 16MB }` to reject oversized uploads at the proxy
 before they reach SkillsDex.
 
+### Cloudflare Free Hardening
+
+When the production hostname is proxied through Cloudflare, use these baseline
+Free-plan settings:
+
+- Keep the DNS record proxied, not DNS-only.
+- Set SSL/TLS encryption mode to `Full (strict)` once the origin has a valid
+  certificate for the hostname.
+- Leave the Cloudflare Free Managed Ruleset enabled and review Security Events
+  after changes.
+- Use one conservative rate limiting rule only after observing abuse. Good first
+  candidates are repeated `POST /login` attempts or invite signup abuse.
+- Treat Bot Fight Mode carefully because it applies broadly on the Free plan and
+  can interfere with CLI/API traffic. Enable it only after testing normal CLI
+  flows, or after there is real bot traffic to mitigate.
+- Keep the Caddy origin gate or, preferably, add a host firewall allowlist for
+  Cloudflare IP ranges so direct-to-origin traffic cannot bypass Cloudflare.
+- Do not trust `CF-Connecting-IP` or forwarded IP headers unless direct origin
+  traffic is blocked by Caddy or the host firewall.
+
 ### Firewall
 
 Expose only:
