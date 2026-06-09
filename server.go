@@ -2403,12 +2403,12 @@ func invitesPage(invites []SignupInvite, inviteURL, msg string) template.HTML {
 	var b strings.Builder
 	b.WriteString(`<header class="pagehead"><div><p class="eyebrow">Admin</p><h1>Invites</h1><p>Create 24-hour signup links for new non-admin users.</p></div><div class="page-art users-art" aria-hidden="true">` + icon("users") + `</div></header><div class="split"><section class="surface data-surface">`)
 	if msg != "" {
-		b.WriteString(`<p class="flash">` + html.EscapeString(msg) + `</p>`)
+		b.WriteString(`<p class="flash ` + html.EscapeString(inviteFlashClass(msg)) + `">` + html.EscapeString(msg) + `</p>`)
 	}
 	if inviteURL != "" {
 		b.WriteString(`<div class="command-card"><span>One-time signup URL</span><pre>` + html.EscapeString(inviteURL) + `</pre></div>`)
 	}
-	b.WriteString(`<table><thead><tr><th>Token</th><th>Status</th><th>Created</th><th>Expires</th><th>Used By</th><th></th></tr></thead><tbody>`)
+	b.WriteString(`<table class="invite-table"><thead><tr><th>Token</th><th>Status</th><th>Created</th><th>Expires</th><th>Used By</th><th></th></tr></thead><tbody>`)
 	if len(invites) == 0 {
 		b.WriteString(`<tr><td colspan="6"><div class="empty">No signup invites yet.</div></td></tr>`)
 	}
@@ -2422,13 +2422,20 @@ func invitesPage(invites []SignupInvite, inviteURL, msg string) template.HTML {
 		if usedBy == "" {
 			usedBy = "-"
 		}
-		b.WriteString(`<tr><td><code>` + html.EscapeString(invite.TokenPreview) + `</code><div class="muted">` + html.EscapeString(invite.ID) + `</div></td><td><span class="pill ` + html.EscapeString(status) + `">` + html.EscapeString(status) + `</span></td><td>` + invite.CreatedAt.Format("2006-01-02 15:04") + `</td><td>` + invite.ExpiresAt.Format("2006-01-02 15:04") + `</td><td>` + html.EscapeString(usedBy) + `</td><td>` + action + `</td></tr>`)
+		b.WriteString(`<tr><td class="token-cell invite-token-cell"><code>` + html.EscapeString(invite.TokenPreview) + `</code><div class="muted">` + html.EscapeString(invite.ID) + `</div></td><td class="invite-status-cell"><span class="pill ` + html.EscapeString(status) + `">` + html.EscapeString(status) + `</span></td><td class="invite-date-cell">` + invite.CreatedAt.Format("2006-01-02 15:04") + `</td><td class="invite-date-cell">` + invite.ExpiresAt.Format("2006-01-02 15:04") + `</td><td class="invite-used-cell">` + html.EscapeString(usedBy) + `</td><td class="invite-action-cell">` + action + `</td></tr>`)
 	}
 	b.WriteString(`</tbody></table></section><aside class="panel sticky"><div class="panel-head"><div class="panel-icon">` + icon("key") + `</div><div><h2>New Invite</h2><p>Create a single-use signup link that expires in 24 hours.</p></div></div><form method="post" action="/admin/invites">
 		<label>Email invite <input name="email" type="email" autocomplete="email" placeholder="optional"></label>
 		<button type="submit">` + iconLabel("plus", "Create Invite") + `</button>
 	</form><div class="command-card"><span>CLI</span><pre>skillsdex invites create --email user@example.com</pre></div></aside></div>`)
 	return template.HTML(b.String())
+}
+
+func inviteFlashClass(msg string) string {
+	if strings.HasPrefix(msg, "Invite emailed to ") {
+		return "success"
+	}
+	return "warning"
 }
 
 func signupInviteCreateMessage(result SignupInviteCreateResult) string {
@@ -3759,6 +3766,7 @@ button:hover, .button:hover { background: var(--accent-strong); color: #fff; }
 .theme-toggle + form { margin-left: 0; }
 .nav-logout { display: inline-flex; align-items: center; gap: 7px; }
 .flash { background: var(--warning-bg); border: 1px solid var(--warning-line); padding: 11px 13px; border-radius: 6px; color: var(--warning-text); }
+.flash.success { background: var(--ok-bg); border-color: var(--ok-line); color: var(--ok); }
 .setup-list { display: grid; gap: 14px; }
 .setup-step { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 14px; }
 .setup-step-index { width: 34px; height: 34px; border-radius: 999px; display: inline-grid; place-items: center; background: var(--accent-ink); color: #fff; font-weight: 850; }
@@ -3835,7 +3843,19 @@ code { background: var(--soft); border: 1px solid var(--soft-border); border-rad
 .pill.pinned { color: var(--gold); background: var(--warning-bg); border-color: var(--warning-line); }
 	.pill.source { color: var(--accent-strong); background: var(--surface-3); border-color: var(--soft-border); }
 	.pill.archived, .pill.revoked, .pill.deactivated { color: var(--warn); background: var(--warning-bg); border-color: var(--warning-line); }
-	.token-cell code { display: block; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.token-cell code { display: block; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.invite-table { table-layout: fixed; }
+.invite-table th, .invite-table td { vertical-align: middle; }
+.invite-table th:nth-child(1) { width: 37%; }
+.invite-table th:nth-child(2) { width: 12%; }
+.invite-table th:nth-child(3), .invite-table th:nth-child(4) { width: 15%; }
+.invite-table th:nth-child(5) { width: 9%; }
+.invite-table th:nth-child(6) { width: 12%; }
+.invite-token-cell .muted { margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.invite-date-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.invite-status-cell, .invite-used-cell { white-space: nowrap; }
+.invite-action-cell { text-align: right; white-space: nowrap; }
+.invite-action-cell form { display: inline-flex; margin: 0; }
 	.one-time-token { display: grid; gap: 8px; margin: 16px; padding: 14px; border-radius: 7px; border: 1px solid var(--ok-line); background: var(--ok-bg); }
 	.one-time-token span { color: var(--ok); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
 	.one-time-token code { display: block; overflow-wrap: anywhere; background: var(--surface); }
