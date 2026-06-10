@@ -131,7 +131,7 @@ TOML
     "openrouter": {
       "models": {
         "openrouter/free": {},
-        "~anthropic/claude-sonnet-latest": {}
+        "inclusionai/ling-2.6-flash": {}
       }
     }
   },
@@ -144,7 +144,7 @@ JSON
   export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
   export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY"
   export ANTHROPIC_API_KEY=""
-  export OPENROUTER_CLAUDE_MODEL="${OPENROUTER_CLAUDE_MODEL:-~anthropic/claude-sonnet-latest}"
+  export OPENROUTER_CLAUDE_MODEL="${OPENROUTER_CLAUDE_MODEL:-inclusionai/ling-2.6-flash}"
   export ANTHROPIC_DEFAULT_OPUS_MODEL="$OPENROUTER_CLAUDE_MODEL"
   export ANTHROPIC_DEFAULT_SONNET_MODEL="$OPENROUTER_CLAUDE_MODEL"
   export ANTHROPIC_DEFAULT_HAIKU_MODEL="$OPENROUTER_CLAUDE_MODEL"
@@ -177,16 +177,20 @@ JSON
 
   log "Testing Claude provider route"
   if command -v claude >/dev/null 2>&1; then
-    if ! (cd "$work" && timeout 90 claude --bare --model "$OPENROUTER_CLAUDE_MODEL" --max-budget-usd 0.10 \
-      -p "Say ok and stop." >"$claude_out" 2>&1); then
+    claude_ok=0
+    if ! (cd "$work" && timeout 90 claude --bare --model "$OPENROUTER_CLAUDE_MODEL" --max-budget-usd 0.05 \
+      --output-format json -p "Say ok and stop." >"$claude_out" 2>&1); then
       if [ "${SKILLSDEX_E2E_CLAUDE_STRICT:-0}" = "1" ]; then
         sed -n '1,180p' "$claude_out" >&2 || true
         fail "claude provider smoke failed"
       fi
       sed -n '1,80p' "$claude_out" >&2 || true
       echo "warning: claude provider smoke failed; continuing because SKILLSDEX_E2E_CLAUDE_STRICT is not set" >&2
-    else
-      require_contains "$claude_out" "ok"
+      claude_ok=1
+    fi
+    if [ "$claude_ok" -eq 0 ]; then
+      require_contains "$claude_out" '"is_error":false'
+      require_contains "$claude_out" "$OPENROUTER_CLAUDE_MODEL"
     fi
   else
     echo "warning: claude is not installed; skipping" >&2
@@ -199,7 +203,8 @@ JSON
     sqlite3 "$HOME/.local/share/opencode/opencode.db" \
       "select json_extract(data, '$.text') from part where json_extract(data, '$.type') = 'text' order by time_created desc limit 1;" \
       >"$tmp/opencode-db.out" 2>/dev/null || true
-    require_contains "$tmp/opencode-db.out" "ok"
+    tr '[:upper:]' '[:lower:]' <"$tmp/opencode-db.out" >"$tmp/opencode-db-normalized.out"
+    require_contains "$tmp/opencode-db-normalized.out" "ok"
   else
     echo "warning: opencode is not installed; skipping" >&2
   fi

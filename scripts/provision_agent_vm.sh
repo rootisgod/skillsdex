@@ -430,6 +430,8 @@ TOML
       "models": {
         "openrouter/free": {},
         "qwen/qwen3-coder:free": {},
+        "inclusionai/ling-2.6-flash": {},
+        "anthropic/claude-haiku-4.5": {},
         "~anthropic/claude-haiku-latest": {}
       }
     }
@@ -459,12 +461,12 @@ export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY"
 export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
 export ANTHROPIC_API_KEY=""
 
-# Cheap/free smoke-test models. Claude Code needs an Anthropic-backed
-# OpenRouter model for reliable non-interactive output.
+# Cheap/free smoke-test models. Ling is the cheapest Claude Code route that
+# returned non-empty text reliably in VM smoke tests.
 export OPENROUTER_CODEX_MODEL="openrouter/free"
 export OPENROUTER_OPENCODE_MODEL="openrouter/openrouter/free"
 export OPENROUTER_PI_MODEL="openrouter/openrouter/free"
-export OPENROUTER_CLAUDE_MODEL="~anthropic/claude-sonnet-latest"
+export OPENROUTER_CLAUDE_MODEL="inclusionai/ling-2.6-flash"
 export ANTHROPIC_DEFAULT_OPUS_MODEL="$OPENROUTER_CLAUDE_MODEL"
 export ANTHROPIC_DEFAULT_SONNET_MODEL="$OPENROUTER_CLAUDE_MODEL"
 export ANTHROPIC_DEFAULT_HAIKU_MODEL="$OPENROUTER_CLAUDE_MODEL"

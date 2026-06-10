@@ -125,7 +125,7 @@ export OPENROUTER_API_KEY="sk-or-..."
 export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
 export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY"
 export ANTHROPIC_API_KEY=""
-export OPENROUTER_CLAUDE_MODEL="~anthropic/claude-sonnet-latest"
+export OPENROUTER_CLAUDE_MODEL="inclusionai/ling-2.6-flash"
 export OPENROUTER_PI_MODEL="openrouter/openrouter/free"
 export ANTHROPIC_DEFAULT_OPUS_MODEL="$OPENROUTER_CLAUDE_MODEL"
 export ANTHROPIC_DEFAULT_SONNET_MODEL="$OPENROUTER_CLAUDE_MODEL"
@@ -139,9 +139,21 @@ The values tested on the disposable VM were:
 | --- | --- | --- |
 | Raw OpenRouter API | `openrouter/free` | returned `ok` |
 | Codex CLI | `openrouter/free` | returned `ok` |
-| Claude Code | `~anthropic/claude-sonnet-latest` | returned `ok` with `--bare` |
+| Claude Code | `inclusionai/ling-2.6-flash` | returned `ok` with `--bare`; full VM e2e passed |
 | OpenCode | `openrouter/openrouter/free` | returned `ok`, but only in the local DB because OpenCode 1.16.2 did not print assistant text in headless mode |
 | Pi CLI | `openrouter/openrouter/free` | returned `ok` |
+
+Claude Code model notes from the VM:
+
+| Model | OpenRouter price | VM result |
+| --- | --- | --- |
+| `google/gemma-4-26b-a4b-it:free` | free | returned `ok` once, then timed out at 90s; not stable enough for the default |
+| `openrouter/free` | free | provider route succeeded, but Claude Code returned empty final text |
+| `nvidia/nemotron-3-nano-30b-a3b:free` | free | provider route succeeded, but Claude Code returned empty final text |
+| `deepseek/deepseek-v4-flash` | `$0.0983/M` input, `$0.1966/M` output | provider route succeeded, but Claude Code returned empty final text |
+| `inclusionai/ling-2.6-flash` | `$0.01/M` input, `$0.03/M` output | returned `ok` and passed the full VM e2e |
+| `mistralai/ministral-3b-2512` | `$0.10/M` input, `$0.10/M` output | returned `Ok.` in direct Claude Code smoke testing |
+| `anthropic/claude-haiku-4.5` | `$1/M` input, `$5/M` output | provider route succeeded, but Claude Code returned empty final text |
 
 Codex is configured for OpenRouter in `~/.codex/config.toml`. The default model
 is `openrouter/free`; override it for one run when needed:
@@ -185,22 +197,22 @@ pi --no-session --tools read --model "$OPENROUTER_PI_MODEL" \
   -p "Use the loaded skill and run the SkillsDex E2E smoke phrase check."
 ```
 
-Claude Code can also route through OpenRouter. OpenRouter documents that Claude
-Code is only guaranteed to work with Anthropic first-party provider models. Use
-`--bare` so Claude Code does not wait on cached OAuth/keychain state:
+Claude Code can also route through OpenRouter. Use `--bare` so Claude Code does
+not wait on cached OAuth/keychain state:
 
 ```bash
-export OPENROUTER_CLAUDE_MODEL="~anthropic/claude-sonnet-latest"
+export OPENROUTER_CLAUDE_MODEL="inclusionai/ling-2.6-flash"
 export ANTHROPIC_DEFAULT_OPUS_MODEL="$OPENROUTER_CLAUDE_MODEL"
 export ANTHROPIC_DEFAULT_SONNET_MODEL="$OPENROUTER_CLAUDE_MODEL"
 export ANTHROPIC_DEFAULT_HAIKU_MODEL="$OPENROUTER_CLAUDE_MODEL"
 export CLAUDE_CODE_SUBAGENT_MODEL="$OPENROUTER_CLAUDE_MODEL"
-claude --bare --model "$OPENROUTER_CLAUDE_MODEL" --max-budget-usd 0.10 -p "Say ok and stop."
+claude --bare --model "$OPENROUTER_CLAUDE_MODEL" --max-budget-usd 0.05 --output-format json -p "Say ok and stop."
 ```
 
-`openrouter/free` and `~anthropic/claude-haiku-latest` both completed through
-Claude Code on the VM but returned empty final text, so they are not good Claude
-Code smoke-test models.
+Claude Code 2.1.153 can route several OpenRouter models successfully, but many
+non-Anthropic and Haiku responses returned empty final text. `inclusionai/ling-2.6-flash`
+is the cheapest tested model that returned usable text and passed the full VM
+e2e.
 
 `ags` and `skillsdex` do not call an LLM directly in this setup. They can import,
 install, and sync skills without model-provider credentials.
