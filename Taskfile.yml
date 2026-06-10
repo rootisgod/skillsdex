@@ -234,7 +234,7 @@ tasks:
         set -eu
         remote="${VM_HOST:-iain@192.168.1.45}"
         key="${VM_SSH_KEY:-$HOME/.ssh/ib_ssh}"
-        components="${VM_COMPONENTS:-core,codex,claude,opencode,openrouter,agentskill}"
+        components="${VM_COMPONENTS:-core,codex,claude,opencode,pi,openrouter,agentskill}"
         scp -i "$key" -q scripts/provision_agent_vm.sh "$remote:/tmp/skillsdex-provision-agent-vm.sh"
         ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$remote" "bash /tmp/skillsdex-provision-agent-vm.sh --dry-run --components '$components'"
 
@@ -245,7 +245,7 @@ tasks:
         set -eu
         remote="${VM_HOST:-iain@192.168.1.45}"
         key="${VM_SSH_KEY:-$HOME/.ssh/ib_ssh}"
-        components="${VM_COMPONENTS:-core,codex,claude,opencode,openrouter,agentskill}"
+        components="${VM_COMPONENTS:-core,codex,claude,opencode,pi,openrouter,agentskill}"
         scp -i "$key" -q scripts/provision_agent_vm.sh "$remote:/tmp/skillsdex-provision-agent-vm.sh"
         ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$remote" "bash /tmp/skillsdex-provision-agent-vm.sh --components '$components'"
 
@@ -269,6 +269,31 @@ tasks:
         key="${VM_SSH_KEY:-$HOME/.ssh/ib_ssh}"
         scp -i "$key" -q scripts/provision_agent_vm.sh "$remote:/tmp/skillsdex-provision-agent-vm.sh"
         ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$remote" 'bash /tmp/skillsdex-provision-agent-vm.sh --verify-only'
+
+  vm:e2e-agent:
+    desc: Run disposable SkillsDex server + real agent CLI e2e on the VM
+    cmds:
+      - |
+        set -eu
+        remote="${VM_HOST:-iain@192.168.1.45}"
+        key="${VM_SSH_KEY:-$HOME/.ssh/ib_ssh}"
+        components="${VM_COMPONENTS:-core,codex,claude,opencode,pi,openrouter,agentskill}"
+        remote_env="${VM_E2E_OPENROUTER_ENV:-}"
+        if [ -z "$remote_env" ]; then
+          remote_env='~/.env.openrouter'
+        fi
+        mkdir -p dist
+        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/skillsdex-linux-amd64 ./cmd/skillsdex
+        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/skillsdexd-linux-amd64 ./cmd/skillsdexd
+        scp -i "$key" -q scripts/provision_agent_vm.sh "$remote:/tmp/skillsdex-provision-agent-vm.sh"
+        scp -i "$key" -q scripts/e2e_agent_vm.sh "$remote:/tmp/skillsdex-e2e-agent-vm.sh"
+        scp -i "$key" -q scripts/e2e_agent_vm_remote.sh "$remote:/tmp/skillsdex-e2e-agent-vm-remote.sh"
+        scp -i "$key" -q dist/skillsdex-linux-amd64 "$remote:/tmp/skillsdex-e2e"
+        scp -i "$key" -q dist/skillsdexd-linux-amd64 "$remote:/tmp/skillsdexd-e2e"
+        if [ "${VM_E2E_SKIP_PROVISION:-0}" != "1" ]; then
+          ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$remote" "bash /tmp/skillsdex-provision-agent-vm.sh --components '$components'"
+        fi
+        ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$remote" "VM_E2E_OPENROUTER_ENV='$remote_env' bash /tmp/skillsdex-e2e-agent-vm-remote.sh"
 
   launch:
     desc: Build, start, and open the SkillsDex website

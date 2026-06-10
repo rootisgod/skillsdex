@@ -234,7 +234,7 @@ func codexSkillsDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".codex", "skills"), nil
+	return filepath.Join(home, ".agents", "skills"), nil
 }
 
 func codexSkillPath(owner, slug string) (string, error) {

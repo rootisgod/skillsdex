@@ -90,5 +90,5 @@ func (ta *testApp) createSkill(t *testing.T, in SkillInput) *Skill {
 }
 
 func (ta *testApp) installedSkillPath(owner, slug string) string {
-	return filepath.Join(ta.Home, ".codex", "skills", owner+"--"+slug, "SKILL.md")
+	return filepath.Join(ta.Home, ".agents", "skills", owner+"--"+slug, "SKILL.md")
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-default_components="core,codex,claude,opencode,openrouter,agentskill"
+default_components="core,codex,claude,opencode,pi,openrouter,agentskill"
 components="$default_components"
 dry_run=0
 verify_only=0
@@ -17,11 +17,12 @@ Components:
   codex      OpenAI Codex CLI standalone installer
   claude     Claude Code apt repository and package
   opencode   OpenCode npm package
+  pi         Pi coding agent npm package
   openrouter Codex OpenRouter provider config and env example only
   agentskill agentskill.sh CLI npm package, without running skill setup
 
 Defaults to:
-  core,codex,claude,opencode,openrouter,agentskill
+  core,codex,claude,opencode,pi,openrouter,agentskill
 USAGE
 }
 
@@ -124,7 +125,7 @@ validate_components() {
   local component
   for component in $components; do
     case "$component" in
-      core|codex|claude|opencode|openrouter|agentskill) ;;
+      core|codex|claude|opencode|pi|openrouter|agentskill) ;;
       "")
         echo "empty component in --components" >&2
         exit 2
@@ -318,6 +319,15 @@ install_opencode() {
   npm_global_install opencode-ai@latest
 }
 
+install_pi() {
+  log "Installing Pi coding agent"
+  if have pi; then
+    say "pi already present: $(command -v pi)"
+    return 0
+  fi
+  npm_global_install @earendil-works/pi-coding-agent@latest
+}
+
 install_agentskill() {
   log "Installing agentskill.sh CLI"
   if have ags; then
@@ -449,12 +459,12 @@ export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY"
 export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
 export ANTHROPIC_API_KEY=""
 
-# Cheap/free smoke-test models. Claude Code is only guaranteed through
-# OpenRouter with Anthropic-backed models, but openrouter/free is useful
-# when you explicitly want a zero-cost compatibility probe.
+# Cheap/free smoke-test models. Claude Code needs an Anthropic-backed
+# OpenRouter model for reliable non-interactive output.
 export OPENROUTER_CODEX_MODEL="openrouter/free"
 export OPENROUTER_OPENCODE_MODEL="openrouter/openrouter/free"
-export OPENROUTER_CLAUDE_MODEL="openrouter/free"
+export OPENROUTER_PI_MODEL="openrouter/openrouter/free"
+export OPENROUTER_CLAUDE_MODEL="~anthropic/claude-sonnet-latest"
 export ANTHROPIC_DEFAULT_OPUS_MODEL="$OPENROUTER_CLAUDE_MODEL"
 export ANTHROPIC_DEFAULT_SONNET_MODEL="$OPENROUTER_CLAUDE_MODEL"
 export ANTHROPIC_DEFAULT_HAIKU_MODEL="$OPENROUTER_CLAUDE_MODEL"
@@ -476,11 +486,11 @@ verify_install() {
   say "user: $(id)"
 
   local cmd
-  for cmd in node npm go task codex claude opencode ags; do
+  for cmd in node npm go task codex claude opencode pi ags; do
     if have "$cmd"; then
       printf '%-10s %s\n' "$cmd" "$(command -v "$cmd")"
       case "$cmd" in
-        node|npm|go|task|codex|claude|opencode|ags)
+        node|npm|go|task|codex|claude|opencode|pi|ags)
           "$cmd" --version 2>/dev/null | sed "s/^/  /" || true
           ;;
       esac
@@ -504,6 +514,7 @@ if [ "$verify_only" -eq 0 ]; then
   want codex && install_codex
   want claude && install_claude
   want opencode && install_opencode
+  want pi && install_pi
   want openrouter && configure_openrouter
   want agentskill && install_agentskill
 fi

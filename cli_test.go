@@ -289,7 +289,7 @@ func TestRunInstallDefaultsInstallsRecommendedSkills(t *testing.T) {
 	if len(manifest.Installs) != len(defaultSkills()) {
 		t.Fatalf("install count = %d, want %d", len(manifest.Installs), len(defaultSkills()))
 	}
-	wantPath := filepath.Join(home, ".codex", "skills", "admin--five-advisor-review", "SKILL.md")
+	wantPath := filepath.Join(home, ".agents", "skills", "admin--five-advisor-review", "SKILL.md")
 	if _, err := os.Stat(wantPath); err != nil {
 		t.Fatalf("expected installed skill at %s: %v", wantPath, err)
 	}
@@ -308,7 +308,7 @@ func TestInstallSkillResponseHonorsYesNoForUnmanagedOverwrite(t *testing.T) {
 		},
 		Raw: "---\nname: overwrite-me\ndescription: Use when testing overwrites.\n---\n\n# New\n",
 	}
-	path := filepath.Join(home, ".codex", "skills", "admin--overwrite-me", "SKILL.md")
+	path := filepath.Join(home, ".agents", "skills", "admin--overwrite-me", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +353,7 @@ func TestInstallSkillResponseDryRunDoesNotPromptForOverwriteOrRemoval(t *testing
 		},
 		Raw: "# New\n",
 	}
-	path := filepath.Join(home, ".codex", "skills", "admin--dry-run-overwrite", "SKILL.md")
+	path := filepath.Join(home, ".agents", "skills", "admin--dry-run-overwrite", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -496,7 +496,7 @@ func TestInstallSkillResponseRequiresTrustForNewExecutableFiles(t *testing.T) {
 	if _, err := installSkillResponse(&manifest, resp, "codex", confirmOptions{No: true}); err == nil || !strings.Contains(err.Error(), "--no") {
 		t.Fatalf("install executable with --no err = %v, want declined by --no", err)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".codex", "skills", "admin--exec-skill", "scripts", "run.sh")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", "admin--exec-skill", "scripts", "run.sh")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("executable script should not be installed, stat err=%v", err)
 	}
 }
@@ -540,7 +540,7 @@ func TestInstallSkillResponseDryRunPrintsPackageFiles(t *testing.T) {
 	if len(manifest.Installs) != 0 {
 		t.Fatalf("dry-run mutated manifest: %#v", manifest.Installs)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".codex", "skills", "admin--dry-run-folder", "SKILL.md")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", "admin--dry-run-folder", "SKILL.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("dry-run wrote package files, stat err=%v", err)
 	}
 }
@@ -1143,7 +1143,7 @@ func TestCleanFirstRunCLILoop(t *testing.T) {
 	if len(manifest.Installs) != len(defaultSkills()) {
 		t.Fatalf("install count = %d, want %d", len(manifest.Installs), len(defaultSkills()))
 	}
-	skillPath := filepath.Join(home, ".codex", "skills", "admin--five-advisor-review", "SKILL.md")
+	skillPath := filepath.Join(home, ".agents", "skills", "admin--five-advisor-review", "SKILL.md")
 	if _, err := os.Stat(skillPath); err != nil {
 		t.Fatalf("expected installed skill at %s: %v", skillPath, err)
 	}
@@ -1491,7 +1491,7 @@ func TestRunInstalledStrictChecksLocalStatus(t *testing.T) {
 		t.Fatalf("unexpected empty installed JSON: %#v", emptyReport)
 	}
 
-	path := filepath.Join(home, ".codex", "skills", "admin--strict-status", "SKILL.md")
+	path := filepath.Join(home, ".agents", "skills", "admin--strict-status", "SKILL.md")
 	content := []byte("# Strict Status\n")
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
@@ -1561,7 +1561,7 @@ func TestRunInstalledRefreshChecksImportedSources(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
-	skillPath := filepath.Join(home, ".codex", "skills", "admin--imported", "SKILL.md")
+	skillPath := filepath.Join(home, ".agents", "skills", "admin--imported", "SKILL.md")
 	raw := []byte("# Imported\n")
 	if err := os.MkdirAll(filepath.Dir(skillPath), 0700); err != nil {
 		t.Fatal(err)
@@ -1823,7 +1823,7 @@ func TestRunSyncReturnsErrorAfterRemoteIssuesButKeepsProcessing(t *testing.T) {
 		Owner:          "admin",
 		Slug:           "missing-remote",
 		Target:         "codex",
-		Path:           filepath.Join(home, ".codex", "skills", "admin--missing-remote", "SKILL.md"),
+		Path:           filepath.Join(home, ".agents", "skills", "admin--missing-remote", "SKILL.md"),
 		RemoteRevision: "rev_missing",
 		InstalledHash:  sha256String([]byte("# Missing\n")),
 		Files:          []InstalledFile{{Path: "SKILL.md", Hash: sha256String([]byte("# Missing\n"))}},
@@ -1929,10 +1929,10 @@ func TestRunInstallPinnedInstallsPinnedSkills(t *testing.T) {
 	if manifest.Installs[0].Slug != pinned.Slug {
 		t.Fatalf("installed slug = %q, want %q", manifest.Installs[0].Slug, pinned.Slug)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".codex", "skills", "admin--pinned-skill", "SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", "admin--pinned-skill", "SKILL.md")); err != nil {
 		t.Fatalf("expected pinned skill to be installed: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".codex", "skills", "admin--unpinned-skill", "SKILL.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", "admin--unpinned-skill", "SKILL.md")); !os.IsNotExist(err) {
 		t.Fatalf("unpinned skill should not be installed, err=%v", err)
 	}
 }
@@ -2002,10 +2002,10 @@ func TestRunInstallSetInstallsOnlySetSkills(t *testing.T) {
 	if len(manifest.Installs) != 1 || manifest.Installs[0].Slug != included.Slug {
 		t.Fatalf("unexpected installs: %#v", manifest.Installs)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".codex", "skills", "admin--set-included", "SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", "admin--set-included", "SKILL.md")); err != nil {
 		t.Fatalf("expected included skill to be installed: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".codex", "skills", "admin--set-excluded", "SKILL.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", "admin--set-excluded", "SKILL.md")); !os.IsNotExist(err) {
 		t.Fatalf("excluded skill should not be installed, err=%v", err)
 	}
 }
@@ -2631,7 +2631,7 @@ func TestRunSetupPreviewsRecommendedDefaults(t *testing.T) {
 			t.Fatalf("setup preview output missing %q:\n%s", want, out)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(home, ".codex", "skills", "admin--review", "SKILL.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", "admin--review", "SKILL.md")); !os.IsNotExist(err) {
 		t.Fatalf("dry-run should not write skill, err=%v", err)
 	}
 	manifest, err := loadManifest()
@@ -2746,7 +2746,7 @@ func TestRunSetupAppliesExplicitSetAndPreviewsSync(t *testing.T) {
 			t.Fatalf("setup apply output missing %q:\n%s", want, out)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(home, ".codex", "skills", "admin--review", "SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", "admin--review", "SKILL.md")); err != nil {
 		t.Fatalf("expected skill to be installed: %v", err)
 	}
 }
@@ -2899,7 +2899,7 @@ func TestRunImportSourceCanPreviewInstall(t *testing.T) {
 	if len(manifest.Installs) != 0 {
 		t.Fatalf("dry-run install changed manifest: %#v", manifest.Installs)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".codex", "skills", "admin--review", "SKILL.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", "admin--review", "SKILL.md")); !os.IsNotExist(err) {
 		t.Fatalf("dry-run install wrote skill, err=%v", err)
 	}
 }

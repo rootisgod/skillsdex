@@ -145,8 +145,8 @@ List available skills:
 ./skillsdex lint --all
 ./skillsdex lint admin/five-advisor-review
 ./skillsdex lint --file ./my-skill
-./skillsdex lint --file ~/.codex/skills/admin--five-advisor-review/SKILL.md
-./skillsdex lint --json --strict --file ~/.codex/skills/admin--five-advisor-review/SKILL.md
+./skillsdex lint --file ~/.agents/skills/admin--five-advisor-review/SKILL.md
+./skillsdex lint --json --strict --file ~/.agents/skills/admin--five-advisor-review/SKILL.md
 ```
 
 Skills can be tagged with lightweight lowercase labels such as `go`, `python`, `testing`, or `security`. Tags are edited on the web skill form, shown on list/detail pages, included in API JSON, and preserved in SkillsDex backup export/restore. Use the web skill list tag chips, `GET /v1/skills?tag=<tag>`, or `skills --tag <tag>` to narrow list results.
@@ -231,7 +231,7 @@ Or install a single skill:
 The Codex skill is written to:
 
 ```text
-~/.codex/skills/admin--five-advisor-review/SKILL.md
+~/.agents/skills/admin--five-advisor-review/SKILL.md
 ```
 
 If the skill has supporting files such as `references/`, `scripts/`, `assets/`, or `templates/`, they are installed beside `SKILL.md` inside the same managed skill folder. The local manifest tracks every managed package file, so `skillsdex sync` updates supporting files and removes stale managed files as upstream revisions change.
@@ -533,7 +533,22 @@ task e2e-first-run
 
 `task e2e-first-run` starts SkillsDex on `127.0.0.1:18765` with temporary `HOME`, `SKILLSDEX_HOME`, cookies, and SQLite state. It exercises the default login, forced password change, setup page, one-time web token generation, CLI login, `doctor`, `doctor --fix-permissions`, `doctor --strict`, `skills`, `templates`, `mark`, named set setup preview, install dry-runs, `install-defaults`, `installed`, file-level `sync --dry-run` previews, modified-file protection with `--no`/`--yes`, and CLI backup export/inspect/restore dry-runs/restore.
 
-The next CLI confidence step is a disposable real-machine e2e runner. It should require an explicit test-machine marker plus environment variables such as `SKILLSDEX_E2E_SERVER`, `SKILLSDEX_E2E_TOKEN`, and `SKILLSDEX_E2E_ALLOW_WRITES=1`; run only under a dedicated OS user; and exercise `login`, `whoami`, `doctor --strict`, `setup --apply --yes`, install/sync conflict handling, uninstall, publish, backup export/inspect/restore dry-run, and plugin install dry-runs against a real Codex home. Claude and opencode can be preinstalled on that machine, but their real target checks should wait until SkillsDex supports those targets.
+The disposable real-machine e2e runner requires an explicit test-machine marker
+and runs only under a temporary home on the agent VM. It exercises `login`,
+`whoami`, `doctor --strict`, `setup --apply --yes`, plugin install dry-runs and
+execution, installed-skill invocation through real agent CLIs, sync, and
+uninstall. Codex is the first execution target, Pi is the next target because it
+supports `--skill <path>` and works with OpenRouter, Claude Code is checked for
+provider routing with `--bare`, and OpenCode is checked through its local DB
+because headless output can omit assistant text.
+
+The agent VM harness lives in `scripts/e2e_agent_vm.sh` and can be run from the
+workstation with `task vm:e2e-agent` after creating `~/.env.openrouter` on the
+VM. It creates a fresh loopback SkillsDex server and SQLite DB on the VM, seeds
+deterministic skills and a harmless plugin record, installs pinned skills into a
+temporary Codex home, verifies Codex and Pi can invoke the installed smoke skill
+through OpenRouter, checks Claude/OpenCode provider routes, and exercises sync
+plus uninstall.
 
 `task coverage-critical` checks the critical behavior surfaces named in `TESTING.md` instead of relying on a single flat coverage percentage.
 

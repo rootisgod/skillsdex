@@ -237,7 +237,7 @@ func TestHelpPageRequiresAuthAndRendersReference(t *testing.T) {
 		"Assistant Formats",
 		"Portability checklist",
 		".agents/skills/name/SKILL.md",
-		"~/.codex/skills/owner--slug/SKILL.md",
+		"~/.agents/skills/owner--slug/SKILL.md",
 		"Cursor project rule",
 		"https://developers.openai.com/codex/skills",
 	} {

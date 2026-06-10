@@ -130,25 +130,25 @@ codex
 Codex global skills appear to live under:
 
 ```text
-~/.codex/skills/
+~/.agents/skills/
 ```
 
 System skills use:
 
 ```text
-~/.codex/skills/.system/<skill>/SKILL.md
+~/.agents/skills/.system/<skill>/SKILL.md
 ```
 
 SkillsDex-managed user skills should avoid `.system` and install as flat directories:
 
 ```text
-~/.codex/skills/<owner>--<slug>/SKILL.md
+~/.agents/skills/<owner>--<slug>/SKILL.md
 ```
 
 Example:
 
 ```text
-~/.codex/skills/iain--debugging/SKILL.md
+~/.agents/skills/iain--debugging/SKILL.md
 ```
 
 The flat directory form avoids depending on nested skill discovery.
@@ -204,7 +204,7 @@ Core create/edit/save flows should work without JavaScript. CodeMirror should pr
 3. User runs `skillsdex skills`.
 4. CLI lists private skills available to the authenticated user.
 5. User runs `skillsdex install iain/debugging --target codex`.
-6. CLI downloads the skill and writes `~/.codex/skills/iain--debugging/SKILL.md`.
+6. CLI downloads the skill and writes `~/.agents/skills/iain--debugging/SKILL.md`.
 7. CLI records the install in its local manifest.
 8. User runs `skillsdex sync` on another day/machine.
 9. CLI updates installed managed skills if remote revisions changed.
@@ -325,7 +325,7 @@ Install a skill into a target-specific destination.
 Default for Codex:
 
 ```text
-~/.codex/skills/<owner>--<slug>/SKILL.md
+~/.agents/skills/<owner>--<slug>/SKILL.md
 ```
 
 Behavior:
@@ -423,7 +423,7 @@ Example:
       "owner": "iain",
       "slug": "debugging",
       "target": "codex",
-      "path": "/home/iain/.codex/skills/iain--debugging/SKILL.md",
+      "path": "/home/iain/.agents/skills/iain--debugging/SKILL.md",
       "remote_revision": "rev_123",
       "installed_hash": "sha256:abc123",
       "installed_at": "2026-05-30T12:00:00Z",
@@ -908,7 +908,7 @@ The first useful release is complete when:
 19. A user can generate and later view an API token in the web app.
 20. A user can authenticate the CLI with that API token.
 21. `skillsdex skills` lists the user's skills.
-22. `skillsdex install iain/debugging --target codex` writes a Codex skill to `~/.codex/skills/iain--debugging/SKILL.md`.
+22. `skillsdex install iain/debugging --target codex` writes a Codex skill to `~/.agents/skills/iain--debugging/SKILL.md`.
 23. `skillsdex installed` shows the local install.
 24. Editing the skill in the web app and running `skillsdex sync` updates the local install.
 25. If the local file was manually edited, `sync` detects the hash mismatch and does not overwrite without confirmation.

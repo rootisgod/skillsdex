@@ -221,7 +221,7 @@ require_contains "${tmp}/lint-all.out" "active skill(s):"
 HOME="$home" SKILLSDEX_HOME="$skillsdex_home" "$cli_bin" lint --all --json >"${tmp}/lint-all.json"
 require_contains "${tmp}/lint-all.json" '"skill_count":'
 require_contains "${tmp}/lint-all.json" '"reports":'
-skill_file="${home}/.codex/skills/admin--five-advisor-review/SKILL.md"
+skill_file="${home}/.agents/skills/admin--five-advisor-review/SKILL.md"
 HOME="$home" SKILLSDEX_HOME="$skillsdex_home" "$cli_bin" lint --file "$skill_file" >"${tmp}/lint-file.out"
 require_contains "${tmp}/lint-file.out" "${skill_file}:"
 
