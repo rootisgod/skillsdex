@@ -297,8 +297,9 @@ tasks:
         while :; do
           if ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$remote" "VM_E2E_OPENROUTER_ENV='$remote_env' bash /tmp/skillsdex-e2e-agent-vm-remote.sh"; then
             break
+          else
+            status=$?
           fi
-          status=$?
           if [ "$status" -ne 255 ] || [ "$attempt" -ge 3 ]; then
             exit "$status"
           fi
