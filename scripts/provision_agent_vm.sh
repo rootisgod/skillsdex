@@ -341,7 +341,7 @@ install_agentskill() {
 configure_openrouter() {
   log "Configuring OpenRouter placeholders"
   local codex_dir codex_config tmp env_file opencode_dir opencode_config opencode_auth_example codex_model
-  codex_model="${OPENROUTER_CODEX_MODEL:-openrouter/free}"
+  codex_model="${OPENROUTER_CODEX_MODEL:-inclusionai/ling-2.6-flash}"
   codex_dir="$HOME/.codex"
   codex_config="$codex_dir/config.toml"
   opencode_dir="$HOME/.config/opencode"
@@ -463,7 +463,7 @@ export ANTHROPIC_API_KEY=""
 
 # Cheap/free smoke-test models. Ling is the cheapest Claude Code route that
 # returned non-empty text reliably in VM smoke tests.
-export OPENROUTER_CODEX_MODEL="openrouter/free"
+export OPENROUTER_CODEX_MODEL="inclusionai/ling-2.6-flash"
 export OPENROUTER_OPENCODE_MODEL="openrouter/openrouter/free"
 export OPENROUTER_PI_MODEL="openrouter/openrouter/free"
 export OPENROUTER_CLAUDE_MODEL="inclusionai/ling-2.6-flash"

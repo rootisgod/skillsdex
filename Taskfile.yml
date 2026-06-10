@@ -293,7 +293,20 @@ tasks:
         if [ "${VM_E2E_SKIP_PROVISION:-0}" != "1" ]; then
           ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$remote" "bash /tmp/skillsdex-provision-agent-vm.sh --components '$components'"
         fi
-        ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$remote" "VM_E2E_OPENROUTER_ENV='$remote_env' bash /tmp/skillsdex-e2e-agent-vm-remote.sh"
+        attempt=1
+        while :; do
+          if ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$remote" "VM_E2E_OPENROUTER_ENV='$remote_env' bash /tmp/skillsdex-e2e-agent-vm-remote.sh"; then
+            break
+          fi
+          status=$?
+          if [ "$status" -ne 255 ] || [ "$attempt" -ge 3 ]; then
+            exit "$status"
+          fi
+          delay=$((attempt * 10))
+          echo "remote e2e ssh failed with exit 255; retrying in ${delay}s" >&2
+          sleep "$delay"
+          attempt=$((attempt + 1))
+        done
 
   launch:
     desc: Build, start, and open the SkillsDex website

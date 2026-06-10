@@ -106,7 +106,7 @@ The provisioning script installs:
 - Pi coding agent through npm
 - agentskill.sh CLI through npm, without running `ags setup`
 - OpenRouter provider settings in `~/.codex/config.toml`, defaulting to
-  `openrouter/free` for low-cost smoke tests
+  `inclusionai/ling-2.6-flash` for reliable low-cost skill smoke tests
 - OpenCode OpenRouter model entries in `~/.config/opencode/opencode.json`
 - a secret-free env example at `~/.config/skillsdex-agent/env.example`
 
@@ -138,7 +138,7 @@ The values tested on the disposable VM were:
 | Tool | Model or provider value | Status |
 | --- | --- | --- |
 | Raw OpenRouter API | `openrouter/free` | returned `ok` |
-| Codex CLI | `openrouter/free` | returned `ok` |
+| Codex CLI | `inclusionai/ling-2.6-flash` | returned `skillsdex-skill-ok` from the installed SkillsDex skill |
 | Claude Code | `inclusionai/ling-2.6-flash` | returned `ok` with `--bare`; full VM e2e passed |
 | OpenCode | `openrouter/openrouter/free` | returned `ok`, but only in the local DB because OpenCode 1.16.2 did not print assistant text in headless mode |
 | Pi CLI | `openrouter/openrouter/free` | returned `ok` |
@@ -155,12 +155,14 @@ Claude Code model notes from the VM:
 | `mistralai/ministral-3b-2512` | `$0.10/M` input, `$0.10/M` output | returned `Ok.` in direct Claude Code smoke testing |
 | `anthropic/claude-haiku-4.5` | `$1/M` input, `$5/M` output | provider route succeeded, but Claude Code returned empty final text |
 
-Codex is configured for OpenRouter in `~/.codex/config.toml`. The default model
-is `openrouter/free`; override it for one run when needed:
+Codex is configured for OpenRouter in `~/.codex/config.toml`. The e2e harness
+uses `inclusionai/ling-2.6-flash` for the installed-skill assertion because
+`openrouter/free` returned arbitrary text in Codex 0.139.0 on one VM run. Codex
+0.139.0 also requires installed skills to include YAML frontmatter:
 
 ```bash
 codex exec -m openrouter/free "Say ok and stop."
-codex exec -m qwen/qwen3-coder:free "Say ok and stop."
+codex exec -m inclusionai/ling-2.6-flash '$skillsdex-e2e-smoke-reply skillsdex-e2e-smoke-check. Run the SkillsDex E2E smoke phrase check.'
 ```
 
 OpenCode has an OpenRouter provider config in `~/.config/opencode/opencode.json`.

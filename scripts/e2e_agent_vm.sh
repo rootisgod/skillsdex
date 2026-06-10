@@ -109,7 +109,7 @@ agent_smoke() {
   cat >"$HOME/.codex/config.toml" <<TOML
 model_provider = "openrouter"
 model_reasoning_effort = "low"
-model = "openrouter/free"
+model = "inclusionai/ling-2.6-flash"
 
 [model_providers.openrouter]
 name = "openrouter"
@@ -152,8 +152,8 @@ JSON
 
   log "Testing Codex against installed SkillsDex skill"
   if command -v codex >/dev/null 2>&1; then
-    (cd "$work" && timeout 120 codex exec -m openrouter/free --yolo \
-      "\$skillsdex-e2e-smoke-reply Run the SkillsDex E2E smoke phrase check. Return only the exact phrase required by that skill." >"$codex_out" 2>&1) || {
+    (cd "$work" && timeout 120 codex exec -m inclusionai/ling-2.6-flash --yolo \
+      "\$skillsdex-e2e-smoke-reply skillsdex-e2e-smoke-check. Run the SkillsDex E2E smoke phrase check. Return only the exact phrase required by that skill." >"$codex_out" 2>&1) || {
       sed -n '1,180p' "$codex_out" >&2 || true
       fail "codex smoke failed"
     }
@@ -250,6 +250,8 @@ plugin_marker="$tmp/plugin-installed.txt"
 mkdir -p "$home" "$skillsdex_home" "$work"
 
 cleanup() {
+  local status=$?
+  trap - EXIT
   if [ -n "${server_pid:-}" ]; then
     kill "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
@@ -260,6 +262,7 @@ cleanup() {
   else
     echo "Kept e2e directory: $tmp"
   fi
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -313,7 +316,12 @@ require_contains "$tmp/whoami.out" "admin"
 require_contains "$tmp/config.out" "default_target = codex"
 
 log "Seeding deterministic skills and plugin records through the API"
-smoke_body='# SkillsDex E2E Smoke Reply
+smoke_body='---
+name: skillsdex-e2e-smoke-reply
+description: Return the fixed SkillsDex E2E smoke phrase when asked for the smoke phrase check.
+---
+
+# SkillsDex E2E Smoke Reply
 
 Use when the user asks to run the SkillsDex E2E smoke phrase check or mentions the activation phrase `skillsdex-e2e-smoke-check`.
 
@@ -344,7 +352,12 @@ jq -n \
 json_post "/v1/skills" "$tmp/skill-smoke.json" "$tmp/skill-smoke.out"
 require_contains "$tmp/skill-smoke.out" '"slug":"e2e-smoke-reply"'
 
-helper_body='# SkillsDex E2E Helper Skill
+helper_body='---
+name: skillsdex-e2e-helper
+description: Secondary fixture skill for SkillsDex multi-skill install e2e coverage.
+---
+
+# SkillsDex E2E Helper Skill
 
 Use when validating that SkillsDex can install more than one managed skill in a clean machine e2e.
 
