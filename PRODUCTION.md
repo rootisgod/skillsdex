@@ -60,11 +60,10 @@ Keep the runbook below current whenever deployment commands, service layout, bac
 Build and install the binary:
 
 ```bash
-go build -o skillsdex ./cmd/skillsdex
-go build -o skillsdexd ./cmd/skillsdexd
+task prod:build
 id -u skillsdex >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/skillsdex --shell /usr/sbin/nologin skillsdex
-sudo install -m 0755 skillsdex /usr/local/bin/skillsdex
-sudo install -m 0755 skillsdexd /usr/local/bin/skillsdexd
+sudo install -m 0755 bin/skillsdex /usr/local/bin/skillsdex
+sudo install -m 0755 bin/skillsdexd /usr/local/bin/skillsdexd
 sudo install -m 0644 deploy/skillsdex.service /etc/systemd/system/skillsdex.service
 sudo systemctl daemon-reload
 ```
@@ -321,8 +320,8 @@ Build or download the new binaries, then replace them with quick rollback copies
 ```bash
 sudo cp /usr/local/bin/skillsdex /usr/local/bin/skillsdex.previous
 sudo cp /usr/local/bin/skillsdexd /usr/local/bin/skillsdexd.previous
-sudo install -m 0755 ./skillsdex /usr/local/bin/skillsdex
-sudo install -m 0755 ./skillsdexd /usr/local/bin/skillsdexd
+sudo install -m 0755 bin/skillsdex /usr/local/bin/skillsdex
+sudo install -m 0755 bin/skillsdexd /usr/local/bin/skillsdexd
 sudo systemctl restart skillsdex
 sudo systemctl status skillsdex --no-pager
 ```
@@ -390,10 +389,12 @@ The reset revokes existing sessions and API tokens for that admin.
 
 ### Lockout Recovery
 
-Login throttling is in-memory. Restarting the service clears temporary lockouts:
+Login throttling is persisted in SQLite. To clear temporary lockouts after confirming the attempts were expected, stop the service and delete the login failure rows:
 
 ```bash
-sudo systemctl restart skillsdex
+sudo systemctl stop skillsdex
+sudo sqlite3 /var/lib/skillsdex/skillsdex.db "DELETE FROM login_failures;"
+sudo systemctl start skillsdex
 ```
 
 Use this only after confirming the login attempts were expected or after rotating the affected password.

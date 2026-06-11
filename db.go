@@ -141,6 +141,13 @@ func migrate(db *sql.DB) error {
 			used_by TEXT REFERENCES users(id),
 			revoked_at TEXT
 		);`,
+		`CREATE TABLE IF NOT EXISTS login_failures (
+			key TEXT PRIMARY KEY,
+			count INTEGER NOT NULL,
+			first_at TEXT NOT NULL,
+			locked_until TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL
+		);`,
 		`CREATE TABLE IF NOT EXISTS install_sets (
 			id TEXT PRIMARY KEY,
 			user_id TEXT NOT NULL REFERENCES users(id),
@@ -202,6 +209,7 @@ func migrate(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_install_set_skills_set ON install_set_skills(set_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_plugin_installs_user ON plugin_installs(user_id, target, updated_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_signup_invites_created ON signup_invites(created_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_login_failures_updated ON login_failures(updated_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_tags_user_slug ON tags(user_id, slug);`,
 		`CREATE INDEX IF NOT EXISTS idx_skill_tags_tag ON skill_tags(tag_id, skill_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_events_created ON audit_events(created_at DESC);`,
@@ -211,41 +219,41 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
-	addedRecommendedDefault, err := addColumnIfMissing(db, "skills", "recommended_default", "recommended_default INTEGER NOT NULL DEFAULT 0")
+	addedRecommendedDefault, err := addColumnIfMissing(db, "skills", "recommended_default", "INTEGER NOT NULL DEFAULT 0")
 	if err != nil {
 		return err
 	}
-	if _, err := addColumnIfMissing(db, "users", "must_change_password", "must_change_password INTEGER NOT NULL DEFAULT 0"); err != nil {
+	if _, err := addColumnIfMissing(db, "users", "must_change_password", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	if _, err := addColumnIfMissing(db, "skills", "source_provider", "source_provider TEXT"); err != nil {
+	if _, err := addColumnIfMissing(db, "skills", "source_provider", "TEXT"); err != nil {
 		return err
 	}
-	if _, err := addColumnIfMissing(db, "skills", "source_url", "source_url TEXT"); err != nil {
+	if _, err := addColumnIfMissing(db, "skills", "source_url", "TEXT"); err != nil {
 		return err
 	}
-	if _, err := addColumnIfMissing(db, "skills", "source_author", "source_author TEXT"); err != nil {
+	if _, err := addColumnIfMissing(db, "skills", "source_author", "TEXT"); err != nil {
 		return err
 	}
-	if _, err := addColumnIfMissing(db, "skills", "source_name", "source_name TEXT"); err != nil {
+	if _, err := addColumnIfMissing(db, "skills", "source_name", "TEXT"); err != nil {
 		return err
 	}
-	if _, err := addColumnIfMissing(db, "skills", "source_path", "source_path TEXT"); err != nil {
+	if _, err := addColumnIfMissing(db, "skills", "source_path", "TEXT"); err != nil {
 		return err
 	}
-	if _, err := addColumnIfMissing(db, "skills", "source_ref", "source_ref TEXT"); err != nil {
+	if _, err := addColumnIfMissing(db, "skills", "source_ref", "TEXT"); err != nil {
 		return err
 	}
 	if err := backfillSourceProvenance(db); err != nil {
 		return err
 	}
-	if _, err := addColumnIfMissing(db, "skills", "pinned_install", "pinned_install INTEGER NOT NULL DEFAULT 0"); err != nil {
+	if _, err := addColumnIfMissing(db, "skills", "pinned_install", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	if _, err := addColumnIfMissing(db, "api_tokens", "token_hash", "token_hash TEXT NOT NULL DEFAULT ''"); err != nil {
+	if _, err := addColumnIfMissing(db, "api_tokens", "token_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if _, err := addColumnIfMissing(db, "api_tokens", "token_preview", "token_preview TEXT NOT NULL DEFAULT ''"); err != nil {
+	if _, err := addColumnIfMissing(db, "api_tokens", "token_preview", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	if err := migrateAPITokenHashes(db); err != nil {
@@ -254,7 +262,7 @@ func migrate(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash)`); err != nil {
 		return err
 	}
-	addedCSRF, err := addColumnIfMissing(db, "web_sessions", "csrf_token", "csrf_token TEXT NOT NULL DEFAULT ''")
+	addedCSRF, err := addColumnIfMissing(db, "web_sessions", "csrf_token", "TEXT NOT NULL DEFAULT ''")
 	if err != nil {
 		return err
 	}
@@ -442,8 +450,20 @@ func githubSourceSkillPath(source githubSource) string {
 	return path.Join(sourcePath, "SKILL.md")
 }
 
-func addColumnIfMissing(db *sql.DB, table, column, definition string) (bool, error) {
-	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+func addColumnIfMissing(db *sql.DB, table, column, clause string) (bool, error) {
+	tableIdent, err := quoteSQLIdentifier(table)
+	if err != nil {
+		return false, err
+	}
+	columnIdent, err := quoteSQLIdentifier(column)
+	if err != nil {
+		return false, err
+	}
+	clause = strings.TrimSpace(clause)
+	if clause == "" {
+		return false, errors.New("column clause is empty")
+	}
+	rows, err := db.Query(`PRAGMA table_info(` + tableIdent + `)`)
 	if err != nil {
 		return false, err
 	}
@@ -464,8 +484,21 @@ func addColumnIfMissing(db *sql.DB, table, column, definition string) (bool, err
 	if err := rows.Err(); err != nil {
 		return false, err
 	}
-	_, err = db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + definition)
+	_, err = db.Exec(`ALTER TABLE ` + tableIdent + ` ADD COLUMN ` + columnIdent + ` ` + clause)
 	return err == nil, err
+}
+
+func quoteSQLIdentifier(name string) (string, error) {
+	if name == "" {
+		return "", errors.New("SQL identifier is empty")
+	}
+	for i, r := range name {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' && i > 0 || r == '_' {
+			continue
+		}
+		return "", fmt.Errorf("invalid SQL identifier %q", name)
+	}
+	return `"` + name + `"`, nil
 }
 
 func ensureDefaultAdmin(db *sql.DB) error {

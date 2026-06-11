@@ -1,13 +1,10 @@
 package skillsdex
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 )
 
@@ -20,12 +17,6 @@ func RunCLI(args []string) int {
 	}
 
 	switch args[0] {
-	case "serve":
-		code, err := runDeprecatedServe(args[1:])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "serve: %v\n", err)
-		}
-		return code
 	case "login":
 		if err := runLogin(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "login: %v\n", err)
@@ -239,45 +230,6 @@ func runServeCommand(args []string) error {
 	return runServe(*addr, *dbPath, trustedProxies)
 }
 
-func runDeprecatedServe(args []string) (int, error) {
-	daemonPath, err := findSkillsDexDaemon()
-	if err != nil {
-		return 127, err
-	}
-	fmt.Fprintln(os.Stderr, "skillsdex serve is deprecated; use skillsdexd serve instead.")
-	cmd := exec.Command(daemonPath, append([]string{"serve"}, args...)...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return exitErr.ExitCode(), nil
-		}
-		return 1, err
-	}
-	return 0, nil
-}
-
-func findSkillsDexDaemon() (string, error) {
-	if executable, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(executable), "skillsdexd")
-		if isExecutableFile(candidate) {
-			return candidate, nil
-		}
-	}
-	path, err := exec.LookPath("skillsdexd")
-	if err != nil {
-		return "", fmt.Errorf("skillsdexd not found; install the server binary and run `skillsdexd serve`")
-	}
-	return path, nil
-}
-
-func isExecutableFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir() && info.Mode()&0111 != 0
-}
-
 func cliUsage() {
 	fmt.Fprintf(os.Stderr, `skillsdex %s
 
@@ -322,7 +274,6 @@ Usage:
 
 Server:
   skillsdexd serve [--addr ADDR] [--db PATH] [--trusted-proxy IP_OR_CIDR]
-  skillsdex serve is deprecated and delegates to skillsdexd when available.
 `, version)
 }
 

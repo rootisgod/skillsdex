@@ -41,6 +41,35 @@ func TestOpenDBConfiguresSQLitePragmas(t *testing.T) {
 	assertPragmaInt("temp_store", 2)
 }
 
+func TestAddColumnIfMissingQuotesIdentifiers(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	added, err := addColumnIfMissing(db, "users", "test_column", "TEXT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !added {
+		t.Fatal("valid test column was not added")
+	}
+	added, err = addColumnIfMissing(db, "users", "test_column", "TEXT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added {
+		t.Fatal("existing test column was added twice")
+	}
+	if _, err := addColumnIfMissing(db, "users; DROP TABLE users; --", "bad", "TEXT"); err == nil {
+		t.Fatal("unsafe table identifier was accepted")
+	}
+	if _, err := addColumnIfMissing(db, "users", "bad-name", "TEXT"); err == nil {
+		t.Fatal("unsafe column identifier was accepted")
+	}
+}
+
 func TestDefaultAdminAndTenantScopedSkills(t *testing.T) {
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
 	if err != nil {

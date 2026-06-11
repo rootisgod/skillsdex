@@ -3,11 +3,11 @@ set -eu
 
 prefix="${PREFIX:-/usr/local}"
 bindir="${BINDIR:-${prefix}/bin}"
-src="${1:-./skillsdex}"
+src="${1:-./bin/skillsdex}"
 
 if [ ! -f "$src" ]; then
   echo "skillsdex binary not found at: $src" >&2
-  echo "Build it first with: go build -o skillsdex ./cmd/skillsdex" >&2
+  echo "Build it first with: task build" >&2
   exit 1
 fi
 

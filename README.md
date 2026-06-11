@@ -22,7 +22,7 @@ task build
 Start the web app and API:
 
 ```bash
-./skillsdexd serve
+./bin/skillsdexd serve
 ```
 
 Or build, start, and open the website in one step:
@@ -61,11 +61,11 @@ To dump your library, open `Skills` and choose `Export`. The download is a zip o
 The same backup path is available from the CLI:
 
 ```bash
-./skillsdex backup export --out ./skillsdex-backup.zip
-./skillsdex backup inspect --file ./skillsdex-backup.zip
-./skillsdex backup inspect --file ./skillsdex-backup.zip --json
-./skillsdex backup restore --file ./skillsdex-backup.zip --dry-run
-./skillsdex backup restore --file ./skillsdex-backup.zip
+./bin/skillsdex backup export --out ./skillsdex-backup.zip
+./bin/skillsdex backup inspect --file ./skillsdex-backup.zip
+./bin/skillsdex backup inspect --file ./skillsdex-backup.zip --json
+./bin/skillsdex backup restore --file ./skillsdex-backup.zip --dry-run
+./bin/skillsdex backup restore --file ./skillsdex-backup.zip
 ```
 
 `backup inspect` and `backup restore --dry-run` validate the zip locally and summarize active, archived, pinned, recommended, source-backed, and supporting-file counts before you upload or restore it. Add `--json` to either local validation command when scripts need structured output.
@@ -73,7 +73,7 @@ The same backup path is available from the CLI:
 For a repository-friendly one-way export, choose `GitHub Export` or run:
 
 ```bash
-./skillsdex github export --dir ./skills-export --yes
+./bin/skillsdex github export --dir ./skills-export --yes
 ```
 
 That writes a `skills/<owner>/<slug>/SKILL.md` tree plus any supporting files and a README that can be committed to GitHub. SkillsDex remains the source of truth; this is intentionally not bidirectional sync.
@@ -81,8 +81,8 @@ That writes a `skills/<owner>/<slug>/SKILL.md` tree plus any supporting files an
 Authenticate the CLI:
 
 ```bash
-printf '%s\n' "$SKILLSDEX_TOKEN" | ./skillsdex login --server http://127.0.0.1:8765 --token-stdin
-./skillsdex login --server http://127.0.0.1:8765 --token <token>
+printf '%s\n' "$SKILLSDEX_TOKEN" | ./bin/skillsdex login --server http://127.0.0.1:8765 --token-stdin
+./bin/skillsdex login --server http://127.0.0.1:8765 --token <token>
 ```
 
 API tokens are shown once when created. After that, the web app stores only a hash and displays a short preview so you can identify and revoke the token later.
@@ -109,11 +109,11 @@ manifest, or config files need to be made private.
 Invite another user:
 
 ```bash
-./skillsdex invites
-./skillsdex invites create
-./skillsdex invites create --email user@example.com
-./skillsdex invites create --json
-./skillsdex invites revoke <invite-id>
+./bin/skillsdex invites
+./bin/skillsdex invites create
+./bin/skillsdex invites create --email user@example.com
+./bin/skillsdex invites create --json
+./bin/skillsdex invites revoke <invite-id>
 ```
 
 Admins can also create, email, and revoke invites from `Admin > Invites`. Each invite creates a one-time signup URL that expires after 24 hours. The invite authorizes signup by possession of the URL; the new user chooses their own username and may add email as account metadata. After signup, the user is sent to the login page.
@@ -131,9 +131,9 @@ Replace `re_xxxxxxxxx` with the real Resend API key and use a sender address fro
 Preview the local onboarding plan:
 
 ```bash
-./skillsdex setup
-./skillsdex setup --set laptop
-./skillsdex setup --set laptop --json
+./bin/skillsdex setup
+./bin/skillsdex setup --set laptop
+./bin/skillsdex setup --set laptop --json
 ```
 
 `setup` checks the server, chooses a single non-empty install set when one exists, otherwise falls back to pinned skills and then recommended defaults. It previews file writes by default; add `--apply --yes` after reviewing the plan. Add `--json` for a preview-only setup plan with the selected source, apply command, and follow-up trust gates. Both preview and apply modes end with a quality gate plus backup export and restore dry-run commands so the first-run loop includes discoverability and source-of-truth checks.
@@ -141,19 +141,19 @@ Preview the local onboarding plan:
 List available skills:
 
 ```bash
-./skillsdex skills
-./skillsdex skills --json
-./skillsdex skills --tag testing
-./skillsdex show admin/five-advisor-review
-./skillsdex show admin/five-advisor-review --file references/guide.md
-./skillsdex show admin/five-advisor-review --raw
-./skillsdex mark admin/five-advisor-review --pinned --apply --yes
-./skillsdex mark admin/five-advisor-review --recommended --apply --yes
-./skillsdex lint --all
-./skillsdex lint admin/five-advisor-review
-./skillsdex lint --file ./my-skill
-./skillsdex lint --file ~/.agents/skills/admin--five-advisor-review/SKILL.md
-./skillsdex lint --json --strict --file ~/.agents/skills/admin--five-advisor-review/SKILL.md
+./bin/skillsdex skills
+./bin/skillsdex skills --json
+./bin/skillsdex skills --tag testing
+./bin/skillsdex show admin/five-advisor-review
+./bin/skillsdex show admin/five-advisor-review --file references/guide.md
+./bin/skillsdex show admin/five-advisor-review --raw
+./bin/skillsdex mark admin/five-advisor-review --pinned --apply --yes
+./bin/skillsdex mark admin/five-advisor-review --recommended --apply --yes
+./bin/skillsdex lint --all
+./bin/skillsdex lint admin/five-advisor-review
+./bin/skillsdex lint --file ./my-skill
+./bin/skillsdex lint --file ~/.agents/skills/admin--five-advisor-review/SKILL.md
+./bin/skillsdex lint --json --strict --file ~/.agents/skills/admin--five-advisor-review/SKILL.md
 ```
 
 Skills can be tagged with lightweight lowercase labels such as `go`, `python`, `testing`, or `security`. Tags are edited on the web skill form, shown on list/detail pages, included in API JSON, and preserved in SkillsDex backup export/restore. Use the web skill list tag chips, `GET /v1/skills?tag=<tag>`, or `skills --tag <tag>` to narrow list results.
@@ -169,11 +169,11 @@ Use `lint --all --json --strict` as a library-wide quality gate before exporting
 Search public agentskill.sh skills from the CLI:
 
 ```bash
-./skillsdex search "code review"
-./skillsdex top --limit 20
-./skillsdex import-source @openclaw/openclaw-debugging
-./skillsdex import-source @openclaw/openclaw-debugging --install --dry-run
-./skillsdex import-source @openclaw/openclaw-debugging --install --yes
+./bin/skillsdex search "code review"
+./bin/skillsdex top --limit 20
+./bin/skillsdex import-source @openclaw/openclaw-debugging
+./bin/skillsdex import-source @openclaw/openclaw-debugging --install --dry-run
+./bin/skillsdex import-source @openclaw/openclaw-debugging --install --yes
 ```
 
 `import-source --install` imports the source into your library, then installs the successfully imported skill package through the same managed-file protections as `install`. `--dry-run` previews only the local install step; the library import still happens.
@@ -183,11 +183,11 @@ Imported skills keep their local SkillsDex identifier, such as `admin/golang-pro
 Publish a local `SKILL.md` or full skill folder into SkillsDex:
 
 ```bash
-./skillsdex templates
-./skillsdex new ./my-skill --template workflow --with-folders
-./skillsdex publish ./my-skill
-./skillsdex publish ./my-skill --apply --yes
-./skillsdex publish ./SKILL.md --slug local-review --strict
+./bin/skillsdex templates
+./bin/skillsdex new ./my-skill --template workflow --with-folders
+./bin/skillsdex publish ./my-skill
+./bin/skillsdex publish ./my-skill --apply --yes
+./bin/skillsdex publish ./SKILL.md --slug local-review --strict
 ```
 
 `templates` lists the reusable scaffold templates. `new` scaffolds a local skill folder from the same workflow, review, and research templates used by the web editor. `publish` previews by default, lints before writing, lists included package files, preserves supporting files from skill folders, and creates or updates the matching library skill only with `--apply`. Folder publishes skip and report common local metadata and secret-prone files such as `.git/`, `.vscode/`, `node_modules/`, `.env`, and `.DS_Store`; keep intentional assets under package paths such as `references/`, `scripts/`, `assets/`, or `templates/`.
@@ -195,44 +195,44 @@ Publish a local `SKILL.md` or full skill folder into SkillsDex:
 Preview upstream changes for imported GitHub or agentskill.sh skills:
 
 ```bash
-./skillsdex refresh admin/five-advisor-review
-./skillsdex refresh admin/five-advisor-review --diff
-./skillsdex refresh admin/five-advisor-review --json
-./skillsdex refresh --all
-./skillsdex refresh --all --strict
-./skillsdex refresh --all --apply --yes
+./bin/skillsdex refresh admin/five-advisor-review
+./bin/skillsdex refresh admin/five-advisor-review --diff
+./bin/skillsdex refresh admin/five-advisor-review --json
+./bin/skillsdex refresh --all
+./bin/skillsdex refresh --all --strict
+./bin/skillsdex refresh --all --apply --yes
 ```
 
 Install all recommended default skills into Codex:
 
 ```bash
-./skillsdex config set default_target codex
-./skillsdex install-defaults --dry-run
-./skillsdex install-defaults
+./bin/skillsdex config set default_target codex
+./bin/skillsdex install-defaults --dry-run
+./bin/skillsdex install-defaults
 ```
 
 Install your pinned skill set on a new machine:
 
 ```bash
-./skillsdex install-pinned --dry-run
-./skillsdex install-pinned
+./bin/skillsdex install-pinned --dry-run
+./bin/skillsdex install-pinned
 ```
 
 Install a named collection:
 
 ```bash
-./skillsdex sets
-./skillsdex sets laptop
-./skillsdex sets laptop --json
-./skillsdex install-set laptop --dry-run
-./skillsdex install-set laptop
+./bin/skillsdex sets
+./bin/skillsdex sets laptop
+./bin/skillsdex sets laptop --json
+./bin/skillsdex install-set laptop --dry-run
+./bin/skillsdex install-set laptop
 ```
 
 Or install a single skill:
 
 ```bash
-./skillsdex install admin/five-advisor-review --dry-run
-./skillsdex install admin/five-advisor-review
+./bin/skillsdex install admin/five-advisor-review --dry-run
+./bin/skillsdex install admin/five-advisor-review
 ```
 
 The Codex skill is written to:
@@ -252,16 +252,16 @@ Executable flags are preserved for supporting files, but SkillsDex does not exec
 SkillsDex does not package or sync Codex plugins yet. It can track plugin install commands centrally so each machine can run the required install command locally.
 
 ```bash
-./skillsdex plugin add codex-autoresearch \
+./bin/skillsdex plugin add codex-autoresearch \
   --name "Codex Autoresearch" \
   --url https://github.com/TheGreenCedar/codex-autoresearch \
   --target laptop \
   --command "codex plugin install https://github.com/TheGreenCedar/codex-autoresearch"
 
-./skillsdex plugins --target laptop
-./skillsdex plugins codex-autoresearch
-./skillsdex plugin install codex-autoresearch --dry-run
-./skillsdex plugin install codex-autoresearch --yes
+./bin/skillsdex plugins --target laptop
+./bin/skillsdex plugins codex-autoresearch
+./bin/skillsdex plugin install codex-autoresearch --dry-run
+./bin/skillsdex plugin install codex-autoresearch --yes
 ```
 
 `plugin install` executes the stored command on the local machine without invoking a shell. It previews the exact command with `--dry-run` and otherwise requires an interactive confirmation or `--yes`. Shell wrapper commands such as `sh`, `bash`, `zsh`, `cmd`, and PowerShell are rejected when tracking a plugin.
@@ -271,15 +271,15 @@ Plugin repositories that also contain a normal Codex skill can still be imported
 Sync managed installs:
 
 ```bash
-./skillsdex sync
+./bin/skillsdex sync
 ```
 
 Preview sync changes without writing files:
 
 ```bash
-./skillsdex sync --dry-run
-./skillsdex sync --dry-run --strict
-./skillsdex sync --dry-run --json
+./bin/skillsdex sync --dry-run
+./bin/skillsdex sync --dry-run --strict
+./bin/skillsdex sync --dry-run --json
 ```
 
 Dry-run sync prints file-level added, modified, and removed package paths before any write. When changes are pending, it ends with the apply command to run after review. Add `--strict` when scripts should exit nonzero if any managed install would change. Add `--json` with `--dry-run` when automation needs per-install status, file changes, pending counts, failure counts, and next steps without parsing human output.
@@ -289,17 +289,17 @@ If a managed skill is unavailable, archived, or has an invalid package, `sync` r
 Overwrite prompts are interactive by default. For scripts, use `--yes` to allow overwrites or `--no` to decline them without prompting:
 
 ```bash
-./skillsdex sync --yes
-./skillsdex install admin/five-advisor-review --no
+./bin/skillsdex sync --yes
+./bin/skillsdex install admin/five-advisor-review --no
 ```
 
 Inspect local install status:
 
 ```bash
-./skillsdex installed
-./skillsdex installed --refresh
-./skillsdex installed --strict
-./skillsdex installed --json
+./bin/skillsdex installed
+./bin/skillsdex installed --refresh
+./bin/skillsdex installed --strict
+./bin/skillsdex installed --json
 ```
 
 Use `installed --refresh` to also dry-run source refresh checks for managed imported skills. Use `installed --strict` in scripts to exit nonzero when there are no managed installs, when local or reachable remote install status is not clean, or when `--refresh` finds an upstream source update. Add `--json` when scripts need install rows, status counts, source-refresh counts, and issue totals without parsing the table.
@@ -307,11 +307,11 @@ Use `installed --refresh` to also dry-run source refresh checks for managed impo
 Check local health and next steps:
 
 ```bash
-./skillsdex doctor
-./skillsdex doctor --strict
-./skillsdex doctor --refresh --strict
-./skillsdex doctor --fix-permissions
-./skillsdex doctor --json
+./bin/skillsdex doctor
+./bin/skillsdex doctor --strict
+./bin/skillsdex doctor --refresh --strict
+./bin/skillsdex doctor --fix-permissions
+./bin/skillsdex doctor --json
 ```
 
 `doctor` prints a user-friendly health table plus details for authentication,
@@ -329,7 +329,7 @@ existing auth and manifest files back to `0600`.
 Remove a managed install:
 
 ```bash
-./skillsdex uninstall admin/five-advisor-review
+./bin/skillsdex uninstall admin/five-advisor-review
 ```
 
 Uninstall removes the tracked package files and keeps the same local-edit protection used by sync.
@@ -345,14 +345,14 @@ task kill
 Install a locally built binary:
 
 ```bash
-go build -o skillsdex ./cmd/skillsdex
-scripts/install.sh ./skillsdex
+task build
+scripts/install.sh ./bin/skillsdex
 ```
 
 Or choose a custom install path:
 
 ```bash
-PREFIX="$HOME/.local" scripts/install.sh ./skillsdex
+PREFIX="$HOME/.local" scripts/install.sh ./bin/skillsdex
 ```
 
 Docker files are retained for image build checks and future packaging work, but Docker is not the recommended local or internet-facing run path. Use the local binary for development and the systemd service plus an external Caddy reverse proxy for production.
@@ -361,10 +361,9 @@ Run under systemd on a Linux host:
 
 ```bash
 id -u skillsdex >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/skillsdex --shell /usr/sbin/nologin skillsdex
-go build -o skillsdex ./cmd/skillsdex
-go build -o skillsdexd ./cmd/skillsdexd
-sudo install -m 0755 skillsdex /usr/local/bin/skillsdex
-sudo install -m 0755 skillsdexd /usr/local/bin/skillsdexd
+task prod:build
+sudo install -m 0755 bin/skillsdex /usr/local/bin/skillsdex
+sudo install -m 0755 bin/skillsdexd /usr/local/bin/skillsdexd
 sudo install -m 0644 deploy/skillsdex.service /etc/systemd/system/skillsdex.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now skillsdex
@@ -447,10 +446,10 @@ The `Import` page also includes agentskill.sh search. The `Top Skills` page show
 The CLI can use the same authenticated server-side import path:
 
 ```bash
-./skillsdex search "playwright"
-./skillsdex top --limit 10
-./skillsdex import-source https://github.com/owner/repo/tree/main/skill-name
-./skillsdex import-source @owner/skill-name
+./bin/skillsdex search "playwright"
+./bin/skillsdex top --limit 10
+./bin/skillsdex import-source https://github.com/owner/repo/tree/main/skill-name
+./bin/skillsdex import-source @owner/skill-name
 ```
 
 Imported skill detail pages include `Refresh Source` when source metadata is available. The browser flow previews added/modified/removed package files with file diffs, then `Apply Source Update` saves a normal revision only when you confirm. Refresh pulls the latest upstream skill package and preserves local pinned/default install flags. The same path is available from the CLI with `skillsdex refresh`, which previews by default, shows added/modified/removed package files, can print diffs with `--diff`, and updates only with `--apply`.
@@ -493,10 +492,10 @@ Collections are named install sets. Use them when pinned/default is too coarse: 
 Create and manage collections in the web app under `Collections`, then install one from any authenticated machine:
 
 ```bash
-./skillsdex sets
-./skillsdex sets laptop
-./skillsdex sets laptop --json
-./skillsdex install-set laptop
+./bin/skillsdex sets
+./bin/skillsdex sets laptop
+./bin/skillsdex sets laptop --json
+./bin/skillsdex install-set laptop
 ```
 
 ## What We Do Next
@@ -574,6 +573,6 @@ Equivalent core Go commands:
 ```bash
 go test ./...
 go vet ./...
-go build -o skillsdex ./cmd/skillsdex
-go build -o skillsdexd ./cmd/skillsdexd
+go build -o bin/skillsdex ./cmd/skillsdex
+go build -o bin/skillsdexd ./cmd/skillsdexd
 ```

@@ -745,6 +745,10 @@ func TestLoginRateLimitBlocksPasswordGuessing(t *testing.T) {
 		}
 	}
 
+	a = &app{db: db}
+	mux = http.NewServeMux()
+	a.routes(mux)
+
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=admin&password=admin"))
 	req.RemoteAddr = "198.51.100.10:12345"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
