@@ -645,12 +645,16 @@ func TestRunDoctorShowsFirstRunNextSteps(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
+		"Check",
+		"Status",
+		"Detail",
 		"Auth path: " + filepath.Join(home, ".skillsdex", "auth.json") + " (not found)",
 		"Manifest path: " + filepath.Join(home, ".skillsdex", "manifest.json") + " (not found)",
 		"Config path: " + filepath.Join(home, ".skillsdex", "config.json") + " (not found)",
 		"Default target: codex",
 		"Auth: not configured",
 		"Managed installs: 0",
+		"Codex CLI",
 		"Codex skills directory writable: yes",
 		tokenStdinLoginCommand(),
 		"skillsdex install-defaults",
@@ -681,8 +685,11 @@ func TestRunDoctorShowsFirstRunNextSteps(t *testing.T) {
 	if err := json.Unmarshal([]byte(jsonOut), &report); err != nil {
 		t.Fatalf("doctor JSON did not decode: %v\n%s", err, jsonOut)
 	}
-	if report.Healthy || report.IssueCount != 2 || report.Auth.Status != "not-configured" || report.ManagedInstalls.Status != "empty" || report.CodexSkillsDirectory.Status != "writable" {
+	if report.Healthy || report.IssueCount != 2 || report.Auth.Status != "not-configured" || report.Server.Status != "not-checked" || report.ManagedInstalls.Status != "empty" || report.CodexSkillsDirectory.Status != "writable" {
 		t.Fatalf("unexpected first-run doctor JSON: %#v", report)
+	}
+	if report.CodexCLI.Status == "" {
+		t.Fatalf("doctor JSON missing codex CLI status: %#v", report.CodexCLI)
 	}
 	for _, want := range []string{"auth not configured", "no managed installs"} {
 		if !stringSliceContains(report.Issues, want) {
@@ -764,6 +771,9 @@ func TestRunDoctorChecksServerAndInstallStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
+		"Check",
+		"Status",
+		"Detail",
 		"Auth path: " + filepath.Join(home, ".skillsdex", "auth.json") + " (private)",
 		"Manifest path: " + filepath.Join(home, ".skillsdex", "manifest.json") + " (private)",
 		"Config path: " + filepath.Join(home, ".skillsdex", "config.json") + " (not found)",
@@ -773,6 +783,7 @@ func TestRunDoctorChecksServerAndInstallStatus(t *testing.T) {
 		"Library:",
 		"Managed installs: 1",
 		"Install status: clean=1",
+		"Codex CLI",
 		"Codex skills directory writable: yes",
 		"skillsdex installed --refresh --strict",
 		"skillsdex lint --all --strict",
@@ -811,6 +822,9 @@ func TestRunDoctorChecksServerAndInstallStatus(t *testing.T) {
 	}
 	if report.ManagedInstalls.Count != 1 || report.ManagedInstalls.StatusCounts["clean"] != 1 || report.CodexSkillsDirectory.Status != "writable" {
 		t.Fatalf("unexpected healthy doctor JSON install/codex status: %#v", report)
+	}
+	if report.CodexCLI.Status == "" {
+		t.Fatalf("doctor JSON missing codex CLI status: %#v", report.CodexCLI)
 	}
 	if !stringSliceContains(report.NextSteps, "skillsdex lint --all --strict") || !stringSliceContains(report.NextSteps, "skillsdex backup restore --file ./skillsdex-backup.zip --dry-run") {
 		t.Fatalf("doctor JSON next steps missing trust gates: %#v", report.NextSteps)

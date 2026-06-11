@@ -307,7 +307,17 @@ Check local health and next steps:
 ./skillsdex doctor --json
 ```
 
-`doctor` checks authentication, server reachability, managed install status, Codex target writability, and whether local SkillsDex auth/manifest files are private. Authenticated runs end with quality, sync, and backup verification next steps. Add `--refresh` to also dry-run source refresh checks for managed imported skills. Add `--strict` in scripts to exit nonzero when any health check needs attention, including a machine with no managed installs yet or an upstream source update found with `--refresh`. Add `--json` when CI or setup scripts need the health report, issue list, and next steps as structured output. Use `--fix-permissions` to chmod existing auth and manifest files back to `0600`.
+`doctor` prints a user-friendly health table plus details for authentication,
+server reachability, library contents, managed install status, Codex CLI
+availability, Codex target writability, and whether local SkillsDex
+auth/manifest files are private. Authenticated runs end with quality, sync, and
+backup verification next steps. Add `--refresh` to also dry-run source refresh
+checks for managed imported skills. Add `--strict` in scripts to exit nonzero
+when any health check needs attention, including a machine with no managed
+installs yet or an upstream source update found with `--refresh`. Add `--json`
+when CI, LLM agents, or setup scripts need the detailed health report, issue
+list, and next steps as structured output. Use `--fix-permissions` to chmod
+existing auth and manifest files back to `0600`.
 
 Remove a managed install:
 

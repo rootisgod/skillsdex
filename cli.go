@@ -203,6 +203,7 @@ type doctorReport struct {
 	Server               doctorCheckReport           `json:"server"`
 	Library              doctorLibraryReport         `json:"library"`
 	ManagedInstalls      doctorManagedInstallsReport `json:"managed_installs"`
+	CodexCLI             doctorCheckReport           `json:"codex_cli"`
 	CodexSkillsDirectory doctorCheckReport           `json:"codex_skills_directory"`
 	FixedPermissions     []string                    `json:"fixed_permissions,omitempty"`
 	NextSteps            []string                    `json:"next_steps"`
@@ -3187,43 +3188,31 @@ func runDoctor(args ...string) error {
 		Strict:             opts.Strict,
 		Refresh:            opts.Refresh,
 	}
-	if !opts.JSON {
-		fmt.Printf("SkillsDex directory: %s\n", dir)
+	if codexPath, err := exec.LookPath("codex"); err == nil {
+		report.CodexCLI = doctorCheckReport{Status: "found", Value: codexPath}
+	} else {
+		report.CodexCLI = doctorCheckReport{Status: "not-found", Message: "install Codex CLI to use installed skills with Codex"}
 	}
 	if opts.FixPermissions {
 		if fixed, issue := fixDoctorPrivateFilePermissions(authPath, "auth file"); issue != "" {
 			issues = append(issues, issue)
 		} else if fixed != "" {
 			report.FixedPermissions = append(report.FixedPermissions, fixed)
-			if !opts.JSON {
-				fmt.Println(fixed)
-			}
 		}
 		if fixed, issue := fixDoctorPrivateFilePermissions(manifestPath, "manifest file"); issue != "" {
 			issues = append(issues, issue)
 		} else if fixed != "" {
 			report.FixedPermissions = append(report.FixedPermissions, fixed)
-			if !opts.JSON {
-				fmt.Println(fixed)
-			}
 		}
 		if fixed, issue := fixDoctorPrivateFilePermissions(configPath, "config file"); issue != "" {
 			issues = append(issues, issue)
 		} else if fixed != "" {
 			report.FixedPermissions = append(report.FixedPermissions, fixed)
-			if !opts.JSON {
-				fmt.Println(fixed)
-			}
 		}
 	}
 	report.AuthPath = doctorPrivateFileReport(authPath, "auth file")
 	report.ManifestPath = doctorPrivateFileReport(manifestPath, "manifest file")
 	report.ConfigPath = doctorPrivateFileReport(configPath, "config file")
-	if !opts.JSON {
-		fmt.Printf("Auth path: %s%s\n", authPath, doctorPathHumanSuffix(report.AuthPath))
-		fmt.Printf("Manifest path: %s%s\n", manifestPath, doctorPathHumanSuffix(report.ManifestPath))
-		fmt.Printf("Config path: %s%s\n", configPath, doctorPathHumanSuffix(report.ConfigPath))
-	}
 	if report.AuthPath.Issue != "" {
 		issues = append(issues, report.AuthPath.Issue)
 	}
@@ -3235,51 +3224,31 @@ func runDoctor(args ...string) error {
 	}
 	if configErr != nil {
 		report.DefaultTarget = doctorCheckReport{Status: "unavailable", Message: configErr.Error()}
-		if !opts.JSON {
-			fmt.Printf("Default target: unavailable (%v)\n", configErr)
-		}
 		issues = append(issues, "local config unavailable")
 	} else if err := validateTarget(cfg.DefaultTarget); err != nil {
 		report.DefaultTarget = doctorCheckReport{Status: "invalid", Value: cfg.DefaultTarget, Message: err.Error()}
-		if !opts.JSON {
-			fmt.Printf("Default target: invalid (%v)\n", err)
-		}
 		issues = append(issues, "default target invalid")
 	} else {
 		report.DefaultTarget = doctorCheckReport{Status: "ok", Value: cfg.DefaultTarget}
-		if !opts.JSON {
-			fmt.Printf("Default target: %s\n", cfg.DefaultTarget)
-		}
 	}
 	var client *apiClient
 	authReady := false
 	if authErr == nil {
 		report.Auth = doctorCheckReport{Status: "configured", Value: auth.ServerURL}
-		if !opts.JSON {
-			fmt.Printf("Auth: configured for %s\n", auth.ServerURL)
-		}
 		client = newAPIClient(auth)
 		var me map[string]any
 		if err := client.getJSON("/v1/me", &me); err != nil {
 			report.Server = doctorCheckReport{Status: "unreachable", Message: err.Error()}
-			if !opts.JSON {
-				fmt.Printf("Server: unreachable or token rejected (%v)\n", err)
-			}
 			issues = append(issues, "server unreachable or API token rejected")
 			client = nil
 		} else {
 			username := fmt.Sprint(me["username"])
 			report.Server = doctorCheckReport{Status: "reachable", Value: username}
-			if !opts.JSON {
-				fmt.Printf("Server: reachable as %v\n", me["username"])
-			}
 			authReady = true
 		}
 	} else {
 		report.Auth = doctorCheckReport{Status: "not-configured", Message: authErr.Error()}
-		if !opts.JSON {
-			fmt.Printf("Auth: not configured (%v)\n", authErr)
-		}
+		report.Server = doctorCheckReport{Status: "not-checked", Message: "auth not configured"}
 		issues = append(issues, "auth not configured")
 	}
 	if client != nil {
@@ -3288,9 +3257,6 @@ func runDoctor(args ...string) error {
 		}
 		if err := client.getJSON("/v1/skills", &list); err != nil {
 			report.Library = doctorLibraryReport{Status: "unavailable", Message: err.Error()}
-			if !opts.JSON {
-				fmt.Printf("Library: unavailable (%v)\n", err)
-			}
 			issues = append(issues, "library unavailable")
 		} else {
 			active := 0
@@ -3309,24 +3275,15 @@ func runDoctor(args ...string) error {
 				}
 			}
 			report.Library = doctorLibraryReport{Status: "ok", Active: active, Recommended: recommended, Pinned: pinned}
-			if !opts.JSON {
-				fmt.Printf("Library: %d active skill(s), %d recommended default, %d pinned\n", active, recommended, pinned)
-			}
 		}
 	} else {
 		report.Library = doctorLibraryReport{Status: "not-checked"}
 	}
 	if manifestErr != nil {
 		report.ManagedInstalls = doctorManagedInstallsReport{Status: "unavailable", Message: manifestErr.Error()}
-		if !opts.JSON {
-			fmt.Printf("Managed installs: unavailable (%v)\n", manifestErr)
-		}
 		issues = append(issues, "managed install manifest unavailable")
 	} else {
 		report.ManagedInstalls = doctorManagedInstallsReport{Status: "ok", Count: len(manifest.Installs)}
-		if !opts.JSON {
-			fmt.Printf("Managed installs: %d\n", len(manifest.Installs))
-		}
 		if len(manifest.Installs) == 0 {
 			report.ManagedInstalls.Status = "empty"
 			issues = append(issues, "no managed installs")
@@ -3353,18 +3310,6 @@ func runDoctor(args ...string) error {
 				}
 			}
 			report.ManagedInstalls.StatusCounts = counts
-			statuses := []string{"clean", "update-available", "modified", "missing", "remote-archived", "remote-deleted"}
-			var parts []string
-			for _, status := range statuses {
-				if counts[status] > 0 {
-					parts = append(parts, fmt.Sprintf("%s=%d", status, counts[status]))
-				}
-			}
-			if len(parts) > 0 {
-				if !opts.JSON {
-					fmt.Printf("Install status: %s\n", strings.Join(parts, ", "))
-				}
-			}
 			for status, count := range counts {
 				if status != "clean" && count > 0 {
 					issues = append(issues, fmt.Sprintf("managed install status %s=%d", status, count))
@@ -3372,9 +3317,6 @@ func runDoctor(args ...string) error {
 			}
 			if opts.Refresh {
 				report.ManagedInstalls.SourceRefreshCounts = sourceCounts
-				if !opts.JSON {
-					printDoctorSourceRefresh(sourceCounts)
-				}
 				if sourceCounts["update-available"] > 0 {
 					issues = append(issues, fmt.Sprintf("source updates available=%d", sourceCounts["update-available"]))
 				}
@@ -3386,23 +3328,14 @@ func runDoctor(args ...string) error {
 	}
 	if codexErr != nil {
 		report.CodexSkillsDirectory = doctorCheckReport{Status: "unavailable", Message: codexErr.Error()}
-		if !opts.JSON {
-			fmt.Printf("Codex skills directory: unavailable (%v)\n", codexErr)
-		}
 		issues = append(issues, "Codex skills directory unavailable")
 		report.NextSteps = buildDoctorNextSteps(authReady, manifest)
 		return finishDoctorReport(opts, report, issues)
 	}
 	report.CodexSkillsDirectory = doctorCheckReport{Status: "found", Value: codexDir}
-	if !opts.JSON {
-		fmt.Printf("Codex skills directory: %s\n", codexDir)
-	}
 	if err := os.MkdirAll(codexDir, 0700); err != nil {
 		report.CodexSkillsDirectory.Status = "not-writable"
 		report.CodexSkillsDirectory.Message = err.Error()
-		if !opts.JSON {
-			fmt.Printf("Codex skills directory writable: no (%v)\n", err)
-		}
 		issues = append(issues, "Codex skills directory is not writable")
 		report.NextSteps = buildDoctorNextSteps(authReady, manifest)
 		return finishDoctorReport(opts, report, issues)
@@ -3411,34 +3344,13 @@ func runDoctor(args ...string) error {
 	if err := os.WriteFile(test, []byte("ok"), 0600); err != nil {
 		report.CodexSkillsDirectory.Status = "not-writable"
 		report.CodexSkillsDirectory.Message = err.Error()
-		if !opts.JSON {
-			fmt.Printf("Codex skills directory writable: no (%v)\n", err)
-		}
 		issues = append(issues, "Codex skills directory is not writable")
 	} else {
 		_ = os.Remove(test)
 		report.CodexSkillsDirectory.Status = "writable"
-		if !opts.JSON {
-			fmt.Println("Codex skills directory writable: yes")
-		}
 	}
 	report.NextSteps = buildDoctorNextSteps(authReady, manifest)
 	return finishDoctorReport(opts, report, issues)
-}
-
-func printDoctorSourceRefresh(counts map[string]int) {
-	statuses := []string{"current", "update-available", "refresh-failed"}
-	var parts []string
-	for _, status := range statuses {
-		if counts[status] > 0 {
-			parts = append(parts, fmt.Sprintf("%s=%d", status, counts[status]))
-		}
-	}
-	if len(parts) == 0 {
-		fmt.Println("Source refresh: no imported managed installs checked")
-		return
-	}
-	fmt.Printf("Source refresh: %s\n", strings.Join(parts, ", "))
 }
 
 func fixDoctorPrivateFilePermissions(path, label string) (string, string) {
@@ -3476,8 +3388,260 @@ func finishDoctorReport(opts doctorOptions, report doctorReport, issues []string
 		}
 		return nil
 	}
+	printDoctorHumanReport(report)
 	printDoctorNextSteps(report.NextSteps)
 	return finishDoctor(opts.Strict, issues)
+}
+
+func printDoctorHumanReport(report doctorReport) {
+	fmt.Println("SkillsDex doctor")
+	fmt.Println()
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "Check\tStatus\tDetail")
+	fmt.Fprintln(w, "-----\t------\t------")
+	fmt.Fprintf(w, "Auth\t%s\t%s\n", doctorHumanStatus(report.Auth.Status), doctorAuthTableDetail(report))
+	fmt.Fprintf(w, "Server\t%s\t%s\n", doctorHumanStatus(report.Server.Status), doctorServerDetail(report.Server))
+	fmt.Fprintf(w, "Library\t%s\t%s\n", doctorHumanStatus(report.Library.Status), doctorLibraryDetail(report.Library))
+	fmt.Fprintf(w, "Managed installs\t%s\t%s\n", doctorHumanStatus(report.ManagedInstalls.Status), doctorManagedInstallsDetail(report.ManagedInstalls))
+	if report.Refresh {
+		fmt.Fprintf(w, "Source refresh\t%s\t%s\n", doctorSourceRefreshStatus(report.ManagedInstalls.SourceRefreshCounts), doctorSourceRefreshDetail(report.ManagedInstalls.SourceRefreshCounts))
+	}
+	fmt.Fprintf(w, "Codex CLI\t%s\t%s\n", doctorHumanStatus(report.CodexCLI.Status), doctorCheckDetail(report.CodexCLI))
+	fmt.Fprintf(w, "Codex skills directory\t%s\t%s\n", doctorHumanStatus(report.CodexSkillsDirectory.Status), doctorCheckDetail(report.CodexSkillsDirectory))
+	fmt.Fprintf(w, "Default target\t%s\t%s\n", doctorHumanStatus(report.DefaultTarget.Status), doctorCheckDetail(report.DefaultTarget))
+	fmt.Fprintf(w, "Local files\t%s\t%s\n", doctorLocalFilesStatus(report), doctorLocalFilesDetail(report))
+	_ = w.Flush()
+	fmt.Println()
+
+	if len(report.FixedPermissions) > 0 {
+		fmt.Println("Fixed:")
+		for _, fixed := range report.FixedPermissions {
+			fmt.Printf("  %s\n", fixed)
+		}
+		fmt.Println()
+	}
+
+	fmt.Println("Details:")
+	fmt.Printf("  SkillsDex directory: %s\n", report.SkillsDexDirectory)
+	fmt.Printf("  Auth path: %s%s\n", report.AuthPath.Path, doctorPathHumanSuffix(report.AuthPath))
+	fmt.Printf("  Manifest path: %s%s\n", report.ManifestPath.Path, doctorPathHumanSuffix(report.ManifestPath))
+	fmt.Printf("  Config path: %s%s\n", report.ConfigPath.Path, doctorPathHumanSuffix(report.ConfigPath))
+	fmt.Printf("  Default target: %s\n", doctorDefaultTargetDetail(report.DefaultTarget))
+	fmt.Printf("  Auth: %s\n", doctorAuthDetail(report))
+	fmt.Printf("  Server: %s\n", doctorServerDetail(report.Server))
+	fmt.Printf("  Library: %s\n", doctorLibraryDetail(report.Library))
+	fmt.Printf("  Managed installs: %s\n", doctorManagedInstallsCountDetail(report.ManagedInstalls))
+	if detail := doctorInstallStatusDetail(report.ManagedInstalls); detail != "" {
+		fmt.Printf("  Install status: %s\n", detail)
+	}
+	if report.Refresh {
+		fmt.Printf("  Source refresh: %s\n", doctorSourceRefreshDetail(report.ManagedInstalls.SourceRefreshCounts))
+	}
+	fmt.Printf("  Codex CLI: %s\n", doctorCodexCLIDetail(report.CodexCLI))
+	fmt.Printf("  Codex skills directory: %s\n", doctorCodexSkillsDirectoryDetail(report.CodexSkillsDirectory))
+	fmt.Printf("  Codex skills directory writable: %s\n", doctorCodexSkillsDirectoryWritable(report.CodexSkillsDirectory))
+	fmt.Println()
+}
+
+func doctorHumanStatus(status string) string {
+	switch status {
+	case "ok", "configured", "reachable", "writable", "private", "found", "current":
+		return "ok"
+	case "not-found", "not-configured", "not-checked", "empty":
+		return status
+	case "":
+		return "not-checked"
+	default:
+		return status
+	}
+}
+
+func doctorCheckDetail(check doctorCheckReport) string {
+	if check.Value != "" {
+		return check.Value
+	}
+	if check.Message != "" {
+		return check.Message
+	}
+	return "-"
+}
+
+func doctorAuthDetail(report doctorReport) string {
+	switch report.Auth.Status {
+	case "configured":
+		return "configured for " + report.Auth.Value
+	case "not-configured":
+		return "not configured (" + report.Auth.Message + ")"
+	default:
+		return doctorCheckDetail(report.Auth)
+	}
+}
+
+func doctorAuthTableDetail(report doctorReport) string {
+	switch report.Auth.Status {
+	case "configured":
+		return report.Auth.Value
+	case "not-configured":
+		return "not logged in; run the login command in Next steps"
+	default:
+		return doctorCheckDetail(report.Auth)
+	}
+}
+
+func doctorServerDetail(check doctorCheckReport) string {
+	switch check.Status {
+	case "reachable":
+		return "reachable as " + check.Value
+	case "unreachable":
+		return "unreachable or token rejected (" + check.Message + ")"
+	case "":
+		return "not checked"
+	case "not-checked":
+		return "not checked until auth is configured"
+	default:
+		return doctorCheckDetail(check)
+	}
+}
+
+func doctorLibraryDetail(report doctorLibraryReport) string {
+	switch report.Status {
+	case "ok":
+		return fmt.Sprintf("%d active skill(s), %d recommended default, %d pinned", report.Active, report.Recommended, report.Pinned)
+	case "not-checked":
+		return "not checked until auth/server is working"
+	case "unavailable":
+		return "unavailable (" + report.Message + ")"
+	default:
+		return doctorDash(report.Message)
+	}
+}
+
+func doctorManagedInstallsCountDetail(report doctorManagedInstallsReport) string {
+	switch report.Status {
+	case "unavailable":
+		return "unavailable (" + report.Message + ")"
+	default:
+		return strconv.Itoa(report.Count)
+	}
+}
+
+func doctorManagedInstallsDetail(report doctorManagedInstallsReport) string {
+	if report.Status == "unavailable" {
+		return "unavailable (" + report.Message + ")"
+	}
+	if detail := doctorInstallStatusDetail(report); detail != "" {
+		return fmt.Sprintf("%d install(s); %s", report.Count, detail)
+	}
+	return fmt.Sprintf("%d install(s)", report.Count)
+}
+
+func doctorInstallStatusDetail(report doctorManagedInstallsReport) string {
+	statuses := []string{"clean", "update-available", "modified", "missing", "remote-archived", "remote-deleted"}
+	var parts []string
+	for _, status := range statuses {
+		if report.StatusCounts[status] > 0 {
+			parts = append(parts, fmt.Sprintf("%s=%d", status, report.StatusCounts[status]))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func doctorSourceRefreshStatus(counts map[string]int) string {
+	if len(counts) == 0 {
+		return "not-checked"
+	}
+	if counts["refresh-failed"] > 0 {
+		return "refresh-failed"
+	}
+	if counts["update-available"] > 0 {
+		return "update-available"
+	}
+	if counts["current"] > 0 {
+		return "ok"
+	}
+	return "not-checked"
+}
+
+func doctorSourceRefreshDetail(counts map[string]int) string {
+	statuses := []string{"current", "update-available", "refresh-failed"}
+	var parts []string
+	for _, status := range statuses {
+		if counts[status] > 0 {
+			parts = append(parts, fmt.Sprintf("%s=%d", status, counts[status]))
+		}
+	}
+	if len(parts) == 0 {
+		return "no imported managed installs checked"
+	}
+	return strings.Join(parts, ", ")
+}
+
+func doctorLocalFilesStatus(report doctorReport) string {
+	for _, path := range []doctorPathReport{report.AuthPath, report.ManifestPath, report.ConfigPath} {
+		if path.Issue != "" {
+			return "needs-attention"
+		}
+	}
+	return "ok"
+}
+
+func doctorLocalFilesDetail(report doctorReport) string {
+	return fmt.Sprintf("auth=%s, manifest=%s, config=%s", report.AuthPath.Status, report.ManifestPath.Status, report.ConfigPath.Status)
+}
+
+func doctorDefaultTargetDetail(check doctorCheckReport) string {
+	switch check.Status {
+	case "ok":
+		return check.Value
+	case "invalid":
+		return "invalid (" + check.Message + ")"
+	case "unavailable":
+		return "unavailable (" + check.Message + ")"
+	default:
+		return doctorCheckDetail(check)
+	}
+}
+
+func doctorCodexCLIDetail(check doctorCheckReport) string {
+	switch check.Status {
+	case "found":
+		return "found at " + check.Value
+	case "not-found":
+		return "not found; " + check.Message
+	default:
+		return doctorCheckDetail(check)
+	}
+}
+
+func doctorCodexSkillsDirectoryDetail(check doctorCheckReport) string {
+	switch check.Status {
+	case "writable":
+		return check.Value + " (writable)"
+	case "not-writable":
+		return check.Value + " (not writable: " + check.Message + ")"
+	case "unavailable":
+		return "unavailable (" + check.Message + ")"
+	default:
+		return doctorCheckDetail(check)
+	}
+}
+
+func doctorCodexSkillsDirectoryWritable(check doctorCheckReport) string {
+	switch check.Status {
+	case "writable":
+		return "yes"
+	case "not-writable":
+		return "no (" + check.Message + ")"
+	default:
+		return "unknown"
+	}
+}
+
+func doctorDash(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	return value
 }
 
 func finishDoctor(strict bool, issues []string) error {
