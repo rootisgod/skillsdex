@@ -2256,7 +2256,7 @@ func contentTypeForPath(filePath string) string {
 	switch strings.ToLower(path.Ext(filePath)) {
 	case ".md", ".markdown":
 		return "text/markdown; charset=utf-8"
-	case ".txt", ".json", ".yaml", ".yml", ".toml", ".sh", ".py", ".js", ".ts":
+	case ".txt", ".json", ".yaml", ".yml", ".toml", ".sh", ".py", ".ps1", ".js", ".ts":
 		return "text/plain; charset=utf-8"
 	default:
 		return "application/octet-stream"

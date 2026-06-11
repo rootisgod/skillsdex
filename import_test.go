@@ -606,11 +606,13 @@ func TestImportSkillInputsFromGitHubSupportedSourceShapes(t *testing.T) {
 			case "https://api.github.com/repos/openclaw/agent-skills/contents/skills/autoreview?ref=main":
 				return testResponse(http.StatusOK, `[{"name":"SKILL.md","path":"skills/autoreview/SKILL.md","type":"file","download_url":"https://raw.githubusercontent.com/openclaw/agent-skills/main/skills/autoreview/SKILL.md"},{"name":"scripts","path":"skills/autoreview/scripts","type":"dir"}]`), nil
 			case "https://api.github.com/repos/openclaw/agent-skills/contents/skills/autoreview/scripts?ref=main":
-				return testResponse(http.StatusOK, `[{"name":"autoreview","path":"skills/autoreview/scripts/autoreview","type":"file","download_url":"https://raw.githubusercontent.com/openclaw/agent-skills/main/skills/autoreview/scripts/autoreview"},{"name":"test-review-harness.py","path":"skills/autoreview/scripts/test-review-harness.py","type":"file","download_url":"https://raw.githubusercontent.com/openclaw/agent-skills/main/skills/autoreview/scripts/test-review-harness.py"}]`), nil
+				return testResponse(http.StatusOK, `[{"name":"autoreview","path":"skills/autoreview/scripts/autoreview","type":"file","download_url":"https://raw.githubusercontent.com/openclaw/agent-skills/main/skills/autoreview/scripts/autoreview"},{"name":"test-review-harness.py","path":"skills/autoreview/scripts/test-review-harness.py","type":"file","download_url":"https://raw.githubusercontent.com/openclaw/agent-skills/main/skills/autoreview/scripts/test-review-harness.py"},{"name":"test-review-harness.ps1","path":"skills/autoreview/scripts/test-review-harness.ps1","type":"file","download_url":"https://raw.githubusercontent.com/openclaw/agent-skills/main/skills/autoreview/scripts/test-review-harness.ps1"}]`), nil
 			case "https://raw.githubusercontent.com/openclaw/agent-skills/main/skills/autoreview/scripts/autoreview":
 				return testResponse(http.StatusOK, "#!/usr/bin/env bash\nset -euo pipefail\n"), nil
 			case "https://raw.githubusercontent.com/openclaw/agent-skills/main/skills/autoreview/scripts/test-review-harness.py":
 				return testResponse(http.StatusOK, "print('ok')\n"), nil
+			case "https://raw.githubusercontent.com/openclaw/agent-skills/main/skills/autoreview/scripts/test-review-harness.ps1":
+				return testResponse(http.StatusOK, "Write-Output 'ok'\n"), nil
 			default:
 				t.Fatalf("unexpected request: %s", r.URL.String())
 				return nil, nil
@@ -621,11 +623,13 @@ func TestImportSkillInputsFromGitHubSupportedSourceShapes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(inputs) != 1 || inputs[0].Slug != "autoreview" || len(inputs[0].Files) != 2 {
+		if len(inputs) != 1 || inputs[0].Slug != "autoreview" || len(inputs[0].Files) != 3 {
 			t.Fatalf("unexpected autoreview input: %#v", inputs)
 		}
-		if !inputs[0].Files[0].Executable || !inputs[0].Files[1].Executable {
-			t.Fatalf("scripts should be executable: %#v", inputs[0].Files)
+		for _, file := range inputs[0].Files {
+			if !file.Executable {
+				t.Fatalf("scripts should be executable: %#v", inputs[0].Files)
+			}
 		}
 		files, _, err := normalizedSkillFiles(inputs[0])
 		if err != nil {
@@ -637,6 +641,9 @@ func TestImportSkillInputsFromGitHubSupportedSourceShapes(t *testing.T) {
 		}
 		if seen["scripts/autoreview"].ContentType != "text/plain; charset=utf-8" {
 			t.Fatalf("extensionless script content type = %q", seen["scripts/autoreview"].ContentType)
+		}
+		if seen["scripts/test-review-harness.ps1"].ContentType != "text/plain; charset=utf-8" {
+			t.Fatalf("PowerShell script content type = %q", seen["scripts/test-review-harness.ps1"].ContentType)
 		}
 	})
 

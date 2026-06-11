@@ -265,7 +265,7 @@ func isAllowedTextSkillFilePath(filePath string) bool {
 		return true
 	}
 	switch strings.ToLower(path.Ext(filePath)) {
-	case ".md", ".markdown", ".txt", ".json", ".yaml", ".yml", ".toml", ".sh", ".py", ".js", ".ts", ".css", ".html":
+	case ".md", ".markdown", ".txt", ".json", ".yaml", ".yml", ".toml", ".sh", ".py", ".ps1", ".js", ".ts", ".css", ".html":
 		return true
 	default:
 		return false
