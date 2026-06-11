@@ -2250,6 +2250,9 @@ func enforceRevisionQuota(ctx context.Context, q queryer, skillID, userID string
 }
 
 func contentTypeForPath(filePath string) string {
+	if strings.HasPrefix(path.Clean(filePath), "scripts/") && path.Ext(filePath) == "" {
+		return "text/plain; charset=utf-8"
+	}
 	switch strings.ToLower(path.Ext(filePath)) {
 	case ".md", ".markdown":
 		return "text/markdown; charset=utf-8"

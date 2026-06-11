@@ -596,6 +596,50 @@ func TestImportSkillInputsFromGitHubSupportedSourceShapes(t *testing.T) {
 		}
 	})
 
+	t.Run("explicit skill file with extensionless scripts", func(t *testing.T) {
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			switch r.URL.String() {
+			case "https://api.github.com/repos/openclaw/agent-skills/contents/skills/autoreview/SKILL.md?ref=main":
+				return testResponse(http.StatusOK, `{"name":"SKILL.md","path":"skills/autoreview/SKILL.md","type":"file","download_url":"https://raw.githubusercontent.com/openclaw/agent-skills/main/skills/autoreview/SKILL.md","html_url":"https://github.com/openclaw/agent-skills/blob/main/skills/autoreview/SKILL.md"}`), nil
+			case "https://raw.githubusercontent.com/openclaw/agent-skills/main/skills/autoreview/SKILL.md":
+				return testResponse(http.StatusOK, "---\nname: autoreview\ndescription: Use when running a structured code review.\n---\n\n# Auto Review\n"), nil
+			case "https://api.github.com/repos/openclaw/agent-skills/contents/skills/autoreview?ref=main":
+				return testResponse(http.StatusOK, `[{"name":"SKILL.md","path":"skills/autoreview/SKILL.md","type":"file","download_url":"https://raw.githubusercontent.com/openclaw/agent-skills/main/skills/autoreview/SKILL.md"},{"name":"scripts","path":"skills/autoreview/scripts","type":"dir"}]`), nil
+			case "https://api.github.com/repos/openclaw/agent-skills/contents/skills/autoreview/scripts?ref=main":
+				return testResponse(http.StatusOK, `[{"name":"autoreview","path":"skills/autoreview/scripts/autoreview","type":"file","download_url":"https://raw.githubusercontent.com/openclaw/agent-skills/main/skills/autoreview/scripts/autoreview"},{"name":"test-review-harness.py","path":"skills/autoreview/scripts/test-review-harness.py","type":"file","download_url":"https://raw.githubusercontent.com/openclaw/agent-skills/main/skills/autoreview/scripts/test-review-harness.py"}]`), nil
+			case "https://raw.githubusercontent.com/openclaw/agent-skills/main/skills/autoreview/scripts/autoreview":
+				return testResponse(http.StatusOK, "#!/usr/bin/env bash\nset -euo pipefail\n"), nil
+			case "https://raw.githubusercontent.com/openclaw/agent-skills/main/skills/autoreview/scripts/test-review-harness.py":
+				return testResponse(http.StatusOK, "print('ok')\n"), nil
+			default:
+				t.Fatalf("unexpected request: %s", r.URL.String())
+				return nil, nil
+			}
+		})}
+
+		inputs, err := importSkillInputsFromGitHub(context.Background(), client, "https://github.com/openclaw/agent-skills/blob/main/skills/autoreview/SKILL.md", "alice")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(inputs) != 1 || inputs[0].Slug != "autoreview" || len(inputs[0].Files) != 2 {
+			t.Fatalf("unexpected autoreview input: %#v", inputs)
+		}
+		if !inputs[0].Files[0].Executable || !inputs[0].Files[1].Executable {
+			t.Fatalf("scripts should be executable: %#v", inputs[0].Files)
+		}
+		files, _, err := normalizedSkillFiles(inputs[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen := map[string]SkillFile{}
+		for _, file := range files {
+			seen[file.Path] = file
+		}
+		if seen["scripts/autoreview"].ContentType != "text/plain; charset=utf-8" {
+			t.Fatalf("extensionless script content type = %q", seen["scripts/autoreview"].ContentType)
+		}
+	})
+
 	t.Run("repository root skill file", func(t *testing.T) {
 		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			switch r.URL.String() {

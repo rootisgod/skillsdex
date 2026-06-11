@@ -769,7 +769,7 @@ func fetchGitHubSupportingFiles(ctx context.Context, client httpDoer, source git
 				if total > maxSkillsDexExportBytes {
 					return errors.New("GitHub skill folder is too large")
 				}
-				out = append(out, SkillFile{Path: rel, Content: raw, ContentType: contentTypeForPath(rel)})
+				out = append(out, SkillFile{Path: rel, Content: raw, ContentType: contentTypeForPath(rel), Executable: isGitHubSkillScript(rel)})
 			}
 		}
 		return nil
@@ -795,6 +795,10 @@ func fetchGitHubFile(ctx context.Context, client httpDoer, source githubSource, 
 	}
 	raw, err := fetchGitHubRaw(ctx, client, file.DownloadURL)
 	return raw, file.HTMLURL, err
+}
+
+func isGitHubSkillScript(filePath string) bool {
+	return strings.HasPrefix(path.Clean(filePath), "scripts/")
 }
 
 func fetchGitHubAPI(ctx context.Context, client httpDoer, source githubSource, contentPath string) ([]byte, error) {

@@ -260,6 +260,10 @@ func isAllowedTextSkillFilePath(filePath string) bool {
 	if filePath == "SKILL.md" {
 		return true
 	}
+	clean := path.Clean(filePath)
+	if strings.HasPrefix(clean, "scripts/") && path.Ext(clean) == "" {
+		return true
+	}
 	switch strings.ToLower(path.Ext(filePath)) {
 	case ".md", ".markdown", ".txt", ".json", ".yaml", ".yml", ".toml", ".sh", ".py", ".js", ".ts", ".css", ".html":
 		return true
