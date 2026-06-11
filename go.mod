@@ -1,4 +1,4 @@
-module skillsdex
+module github.com/rootisgod/skillsdex
 
 go 1.23
 

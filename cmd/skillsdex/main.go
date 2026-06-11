@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"skillsdex"
+	"github.com/rootisgod/skillsdex"
 )
 
 func main() {
