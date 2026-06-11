@@ -4,6 +4,13 @@ Private dotfiles for AI-agent skills.
 
 SkillsDex is a private hosted skill library plus CLI for syncing reusable Codex skills across machines. The user CLI is `skillsdex`; the web app and JSON API run from the `skillsdexd` server binary with SQLite storage and Codex install/sync support.
 
+## License
+
+SkillsDex is source-available under the PolyForm Noncommercial License 1.0.0.
+You may inspect, copy, modify, and share it for non-commercial purposes, but
+commercial use is not licensed without separate written permission from the
+copyright holder. See [LICENSE](LICENSE).
+
 ## Quickstart
 
 Build the binary:
