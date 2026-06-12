@@ -138,6 +138,18 @@ Preview the local onboarding plan:
 
 `setup` checks the server, chooses a single non-empty install set when one exists, otherwise falls back to pinned skills and then recommended defaults. It previews file writes by default; add `--apply --yes` after reviewing the plan. Add `--json` for a preview-only setup plan with the selected source, apply command, and follow-up trust gates. Both preview and apply modes end with a quality gate plus backup export and restore dry-run commands so the first-run loop includes discoverability and source-of-truth checks.
 
+Open the terminal dashboard for day-to-day install management:
+
+```bash
+./bin/skillsdex tui
+```
+
+The TUI is a non-editor surface for browsing library skills and install sets,
+previewing or applying installs, running sync previews/apply, checking source
+refresh, lint, and doctor status, and reviewing action output. It intentionally
+does not edit `SKILL.md`, supporting files, or install set membership; those
+remain web/editor or future TUI workflows.
+
 List available skills:
 
 ```bash

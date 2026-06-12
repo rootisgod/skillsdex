@@ -17,6 +17,14 @@ func runDoctor(args ...string) error {
 	if err != nil {
 		return errors.New("usage: skillsdex doctor [--strict] [--refresh] [--fix-permissions] [--json]")
 	}
+	report, issues, err := buildDoctorReport(opts)
+	if err != nil {
+		return err
+	}
+	return finishDoctorReport(opts, report, issues)
+}
+
+func buildDoctorReport(opts doctorOptions) (doctorReport, []string, error) {
 	dir, _ := skillsdexDir()
 	authPath, _ := authPath()
 	auth, authErr := loadAuth()
@@ -173,7 +181,7 @@ func runDoctor(args ...string) error {
 		report.CodexSkillsDirectory = doctorCheckReport{Status: "unavailable", Message: codexErr.Error()}
 		issues = append(issues, "Codex skills directory unavailable")
 		report.NextSteps = buildDoctorNextSteps(authReady, manifest)
-		return finishDoctorReport(opts, report, issues)
+		return completeDoctorReport(report, issues), issues, nil
 	}
 	report.CodexSkillsDirectory = doctorCheckReport{Status: "found", Value: codexDir}
 	if err := os.MkdirAll(codexDir, 0700); err != nil {
@@ -181,7 +189,7 @@ func runDoctor(args ...string) error {
 		report.CodexSkillsDirectory.Message = err.Error()
 		issues = append(issues, "Codex skills directory is not writable")
 		report.NextSteps = buildDoctorNextSteps(authReady, manifest)
-		return finishDoctorReport(opts, report, issues)
+		return completeDoctorReport(report, issues), issues, nil
 	}
 	test := filepath.Join(codexDir, ".skillsdex-write-test")
 	if err := os.WriteFile(test, []byte("ok"), 0600); err != nil {
@@ -193,7 +201,7 @@ func runDoctor(args ...string) error {
 		report.CodexSkillsDirectory.Status = "writable"
 	}
 	report.NextSteps = buildDoctorNextSteps(authReady, manifest)
-	return finishDoctorReport(opts, report, issues)
+	return completeDoctorReport(report, issues), issues, nil
 }
 
 func fixDoctorPrivateFilePermissions(path, label string) (string, string) {
@@ -216,10 +224,15 @@ func fixDoctorPrivateFilePermissions(path, label string) (string, string) {
 	return fmt.Sprintf("Fixed %s permissions: %s", label, path), ""
 }
 
-func finishDoctorReport(opts doctorOptions, report doctorReport, issues []string) error {
+func completeDoctorReport(report doctorReport, issues []string) doctorReport {
 	report.Issues = issues
 	report.IssueCount = len(issues)
 	report.Healthy = len(issues) == 0
+	return report
+}
+
+func finishDoctorReport(opts doctorOptions, report doctorReport, issues []string) error {
+	report = completeDoctorReport(report, issues)
 	if opts.JSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")

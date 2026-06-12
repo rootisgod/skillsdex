@@ -28,6 +28,35 @@ func runInstalledArgs(args []string) error {
 	} else if opts.Refresh {
 		return err
 	}
+	report := buildInstalledStatusReport(opts, manifest, client)
+	if opts.JSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(report); err != nil {
+			return err
+		}
+	} else {
+		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "IDENTIFIER\tTARGET\tPATH\tREVISION\tSTATUS\tSOURCE")
+		for _, row := range report.Installs {
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", row.Identifier, row.Target, row.Path, row.RemoteRevision, row.Status, row.SourceStatus)
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+	}
+	if opts.Strict {
+		if len(manifest.Installs) == 0 {
+			return errors.New("no managed installs")
+		}
+		if report.IssueCount > 0 {
+			return fmt.Errorf("%d managed install(s) need attention", report.IssueCount)
+		}
+	}
+	return nil
+}
+
+func buildInstalledStatusReport(opts installedOptions, manifest Manifest, client *apiClient) installedStatusReport {
 	report := installedStatusReport{
 		InstallCount:       len(manifest.Installs),
 		Strict:             opts.Strict,
@@ -84,31 +113,7 @@ func runInstalledArgs(args []string) error {
 	}
 	report.IssueCount = len(report.Issues)
 	report.Healthy = report.InstallCount > 0 && report.IssueCount == 0
-	if opts.JSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(report); err != nil {
-			return err
-		}
-	} else {
-		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "IDENTIFIER\tTARGET\tPATH\tREVISION\tSTATUS\tSOURCE")
-		for _, row := range report.Installs {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", row.Identifier, row.Target, row.Path, row.RemoteRevision, row.Status, row.SourceStatus)
-		}
-		if err := tw.Flush(); err != nil {
-			return err
-		}
-	}
-	if opts.Strict {
-		if len(manifest.Installs) == 0 {
-			return errors.New("no managed installs")
-		}
-		if report.IssueCount > 0 {
-			return fmt.Errorf("%d managed install(s) need attention", report.IssueCount)
-		}
-	}
-	return nil
+	return report
 }
 
 func installedSourceRefreshStatus(client *apiClient, in Install, remote *Skill, remoteErr error) string {

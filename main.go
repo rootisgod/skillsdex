@@ -112,6 +112,11 @@ func RunCLI(args []string) int {
 			fmt.Fprintf(os.Stderr, "setup: %v\n", err)
 			return 1
 		}
+	case "tui":
+		if err := runTUI(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "tui: %v\n", err)
+			return 1
+		}
 	case "install":
 		if err := runInstall(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "install: %v\n", err)
@@ -256,6 +261,7 @@ Usage:
   skillsdex templates
   skillsdex lint [--strict] [--json] (--all | --file PATH | <owner>/<slug>)
   skillsdex setup [--target codex] [--set SLUG|--pinned|--defaults] [--apply|--dry-run] [--json] [--yes|--no]
+  skillsdex tui [--no-alt-screen]
   skillsdex install <owner>/<slug> [--target codex] [--dry-run] [--yes|--no]
   skillsdex install-defaults [--target codex] [--dry-run] [--yes|--no]
   skillsdex install-pinned [--target codex] [--dry-run] [--yes|--no]

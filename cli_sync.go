@@ -110,6 +110,25 @@ func runSync(args []string) error {
 }
 
 func runSyncDryRunJSON(opts syncOptions, manifest Manifest, client *apiClient) error {
+	report, err := buildSyncDryRunReport(opts, manifest, client)
+	if err != nil {
+		return err
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(report); err != nil {
+		return err
+	}
+	if report.FailureCount > 0 {
+		return fmt.Errorf("%d sync issue(s) need attention", report.FailureCount)
+	}
+	if opts.Strict && report.PendingCount > 0 {
+		return errors.New("sync updates available")
+	}
+	return nil
+}
+
+func buildSyncDryRunReport(opts syncOptions, manifest Manifest, client *apiClient) (syncDryRunReport, error) {
 	report := syncDryRunReport{
 		DryRun:       true,
 		Strict:       opts.Strict,
@@ -181,18 +200,7 @@ func runSyncDryRunJSON(opts syncOptions, manifest Manifest, client *apiClient) e
 		report.NextSteps = append(report.NextSteps, "skillsdex sync --yes")
 	}
 	report.Healthy = report.PendingCount == 0 && report.FailureCount == 0
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(report); err != nil {
-		return err
-	}
-	if report.FailureCount > 0 {
-		return fmt.Errorf("%d sync issue(s) need attention", report.FailureCount)
-	}
-	if opts.Strict && report.PendingCount > 0 {
-		return errors.New("sync updates available")
-	}
-	return nil
+	return report, nil
 }
 
 func syncPackageChanges(in Install, files []SkillFile) []SourceRefreshChange {
