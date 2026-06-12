@@ -28,6 +28,8 @@ const (
 	tuiFocusList
 )
 
+const tuiHelpTabCount = 2
+
 type tuiPendingAction struct {
 	Prompt string
 	Cmd    tea.Cmd
@@ -39,6 +41,8 @@ type tuiModel struct {
 	height       int
 	view         tuiView
 	focus        tuiFocus
+	helpOpen     bool
+	helpTab      int
 	cursor       map[tuiView]int
 	filtering    bool
 	filter       string
@@ -170,6 +174,25 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.helpOpen {
+		switch key {
+		case "?", "esc", "q":
+			m.helpOpen = false
+			return m, nil
+		case "ctrl+c":
+			return m, tea.Quit
+		case "tab", "right", "l":
+			m.helpTab = (m.helpTab + 1) % tuiHelpTabCount
+			return m, nil
+		case "shift+tab", "left", "h":
+			m.helpTab--
+			if m.helpTab < 0 {
+				m.helpTab = tuiHelpTabCount - 1
+			}
+			return m, nil
+		}
+		return m, nil
+	}
 	if m.filtering {
 		switch key {
 		case "enter", "esc":
@@ -195,6 +218,10 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key {
 	case "q", "ctrl+c":
 		return m, tea.Quit
+	case "?":
+		m.helpOpen = true
+		m.helpTab = 0
+		return m, nil
 	case "tab", "shift+tab":
 		m.toggleFocus()
 		return m, nil

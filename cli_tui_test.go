@@ -93,3 +93,39 @@ func TestTUILeftRightChangesPaneFocusNotSelectedView(t *testing.T) {
 		t.Fatalf("left focus = %v, want %v", model.focus, tuiFocusNav)
 	}
 }
+
+func TestTUIHelpPopupIncludesCommandCheatsheet(t *testing.T) {
+	model := newTUIModel(tuiOptions{NoAltScreen: true})
+	model.width = 140
+	model.height = 40
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	model = updated.(tuiModel)
+	if !model.helpOpen {
+		t.Fatal("help popup did not open")
+	}
+	view := model.View()
+	for _, want := range []string{"SkillsDex Help", "Keys", "Commands", "p                   preview selected install"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("help popup missing %q:\n%s", want, view)
+		}
+	}
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	model = updated.(tuiModel)
+	if model.helpTab != 1 {
+		t.Fatalf("help tab = %d, want 1", model.helpTab)
+	}
+	view = model.View()
+	for _, want := range []string{"skillsdex new ./path/to/skill --template workflow", "skillsdex publish ./path/to/skill --dry-run"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("command cheatsheet missing %q:\n%s", want, view)
+		}
+	}
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	model = updated.(tuiModel)
+	if model.helpOpen {
+		t.Fatal("help popup did not close")
+	}
+}

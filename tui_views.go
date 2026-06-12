@@ -42,9 +42,12 @@ func (m tuiModel) View() string {
 	vp.SetContent(detailText)
 	detail := tuiBoxStyle.Width(vp.Width).Height(bodyHeight).Render(vp.View())
 	main := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, list, detail)
+	if m.helpOpen {
+		main = m.renderHelpModal(width, bodyHeight)
+	}
 
 	status := m.renderStatus(width)
-	help := tuiMutedStyle.Render("tab focus  up/down choose  left/right pane  / filter  enter details  p preview install  i install  x sync preview  s sync  r/R refresh  d doctor  l/L lint  u reload  q quit")
+	help := tuiMutedStyle.Render("? help  tab focus  up/down choose  left/right pane  / filter  enter details  p preview install  i install  x sync preview  s sync  r/R refresh  d doctor  l/L lint  u reload  q quit")
 	if len(help) > width {
 		help = help[:width]
 	}
