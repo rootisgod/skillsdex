@@ -24,6 +24,11 @@ tasks:
     cmds:
       - task github:download-latest
 
+  update-binaries-system:
+    desc: Download latest release binaries and install them to /usr/local/bin on Linux
+    cmds:
+      - SYSTEM_INSTALL=1 scripts/download_github_release.sh
+
   github:download-latest:
     desc: Download and verify the latest GitHub release binaries for this host
     cmds:

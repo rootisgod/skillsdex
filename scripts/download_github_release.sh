@@ -5,6 +5,8 @@ repo="${SKILLSDEX_RELEASE_REPO:-rootisgod/skillsdex}"
 tag="${RELEASE_TAG:-${VERSION:-latest}}"
 install_dir="${INSTALL_DIR:-bin}"
 include_daemon="${INCLUDE_DAEMON:-1}"
+system_install="${SYSTEM_INSTALL:-0}"
+sudo_cmd="${SUDO:-sudo}"
 
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -67,6 +69,28 @@ download_asset() {
   mkdir -p "$install_dir"
   install -m 0755 "${tmp}/${asset}" "${install_dir}/${installed_name}"
   echo "Installed ${install_dir}/${installed_name}"
+  if [ "$system_install" = "1" ]; then
+    install_system_asset "${tmp}/${asset}" "$installed_name"
+  fi
+}
+
+install_system_asset() {
+  src="$1"
+  installed_name="$2"
+  dest="/usr/local/bin/${installed_name}"
+
+  if [ "$os" != "linux" ]; then
+    echo "SYSTEM_INSTALL=1 is only supported on Linux; skipping ${dest}" >&2
+    return
+  fi
+
+  if [ -w /usr/local/bin ]; then
+    install -m 0755 "$src" "$dest"
+  else
+    need_cmd "$sudo_cmd"
+    "$sudo_cmd" install -m 0755 "$src" "$dest"
+  fi
+  echo "Installed ${dest}"
 }
 
 need_cmd curl

@@ -370,6 +370,15 @@ INSTALL_DIR="$HOME/.local/bin" task update-binaries
 
 Set `RELEASE_TAG=v0.123` to install a specific release instead of the latest.
 
+On Linux test machines, install the same verified binaries to `/usr/local/bin`
+as executable `skillsdex` and `skillsdexd` commands:
+
+```bash
+task update-binaries-system
+```
+
+The system task uses `sudo install` when `/usr/local/bin` is not writable.
+
 Install a locally built binary:
 
 ```bash
