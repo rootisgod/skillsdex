@@ -19,6 +19,16 @@ tasks:
     cmds:
       - rm -rf bin dist skillsdex skillsdexd
 
+  update-binaries:
+    desc: Download the latest GitHub release binaries for this host into INSTALL_DIR (default bin)
+    cmds:
+      - task github:download-latest
+
+  github:download-latest:
+    desc: Download and verify the latest GitHub release binaries for this host
+    cmds:
+      - scripts/download_github_release.sh
+
   release:
     desc: Build release archives for common platforms
     cmds:

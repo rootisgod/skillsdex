@@ -354,6 +354,22 @@ task kill
 
 ## Deployment
 
+Download the latest GitHub-built binaries for the current machine:
+
+```bash
+task update-binaries
+```
+
+That installs verified release assets to `./bin/skillsdex` and `./bin/skillsdexd`
+by default. On a test machine where you want them on your PATH, choose an install
+directory:
+
+```bash
+INSTALL_DIR="$HOME/.local/bin" task update-binaries
+```
+
+Set `RELEASE_TAG=v0.123` to install a specific release instead of the latest.
+
 Install a locally built binary:
 
 ```bash
@@ -426,7 +442,7 @@ The release task writes platform archives under `dist/` and a `dist/SHA256SUMS` 
 cd dist && shasum -a 256 -c SHA256SUMS
 ```
 
-GitHub Actions also creates an automatic release for each push to `main`. The workflow tags releases as `v0.<run_number>` and uploads paired `skillsdex-*` CLI and `skillsdexd-*` server binaries, plus matching `.sha256` files.
+GitHub Actions also creates an automatic release for each push to `main`. The workflow tags releases as `v0.<run_number>` and uploads paired `skillsdex-*` CLI and `skillsdexd-*` server binaries for macOS amd64/arm64, Linux amd64/arm64, and Windows amd64, plus matching `.sha256` files.
 
 Generate a Homebrew formula from the same release artifacts:
 
