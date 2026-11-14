@@ -1,0 +1,20 @@
+# User service: ~/.config/systemd/user/skillsdex-agent.service
+# Replace /absolute/path/to/skillsdex with the installed CLI executable.
+[Unit]
+Description=SkillsDex agent configuration sync
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/absolute/path/to/skillsdex agent watch
+Restart=on-failure
+RestartSec=15
+UMask=0077
+# Set PATH to include your user-installed agent executables.
+Environment=PATH=%h/.local/bin:%h/go/bin:/usr/local/bin:/usr/bin:/bin
+# Uncomment when using custom locations:
+# Environment=SKILLSDEX_HOME=/absolute/path/to/state
+# Environment=CODEX_HOME=/absolute/path/to/codex
+
+[Install]
+WantedBy=default.target

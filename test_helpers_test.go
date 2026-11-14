@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -21,6 +22,30 @@ type testApp struct {
 
 type testAppOption func(*app)
 
+// Keep both Unix and Windows home resolution inside the test's temporary tree.
+func setTestHome(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	resolved, err := os.UserHomeDir()
+	if err != nil || filepath.Clean(resolved) != filepath.Clean(home) {
+		t.Fatalf("test home isolation failed: got %q, want %q: %v", resolved, home, err)
+	}
+}
+
+func TestSkillTargetStaysInsideTestHome(t *testing.T) {
+	home := t.TempDir()
+	setTestHome(t, home)
+	got, err := codexSkillPath("test-owner", "test-skill")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, ".agents", "skills", "test-owner--test-skill", "SKILL.md")
+	if got != want {
+		t.Fatalf("skill destination escaped test home: got %q, want %q", got, want)
+	}
+}
+
 func withSourceClient(client httpDoer) testAppOption {
 	return func(a *app) {
 		a.httpClient = client
@@ -30,7 +55,7 @@ func withSourceClient(client httpDoer) testAppOption {
 func newTestApp(t *testing.T, opts ...testAppOption) *testApp {
 	t.Helper()
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))

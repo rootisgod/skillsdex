@@ -1,5 +1,93 @@
 # SkillsDex Product and Technical Spec
 
+## Updated product direction — November 2026
+
+### Implementation checkpoint
+
+Implemented in the current worktree: restrained sidebar/surface redesign; Overview, Instructions and Machines pages; editable starter token-efficiency policy; immutable instruction versions with optimistic concurrency and restore; expiring single-use machine enrolment; revocable device credentials; ETag-based downloads and per-agent reports; Codex/Claude/Gemini global-file adapters; guided CLI setup with detected-agent and revision review; automatic user-level startup; local/shared comparison with persistent Keep mine and backed-up Use shared choices; portable instruction-history backup and machine inventory; neutral offline status and explicit file-delivery wording; process locking and Windows DPAPI connection protection.
+
+Verification: full Linux test binary passes under WSL; Windows feature tests cover registration through file application and reporting, DPAPI, conflict/rollback, malformed manifests, offline/cancellation behaviour, status presentation, authentication and CSRF. `go vet` passes. Linux and macOS CLI cross-builds pass. Windows full-suite failures remain in seven existing Unix-mode/doctor permission assertions; the test-home isolation and output-pipe deadlock found during this work have been fixed.
+
+Native startup verification: isolated Windows scheduled-task and Linux user-systemd smoke tests pass installation, retry, activation and cleanup. macOS service generation has XML checks and cross-build validation, but its native lifecycle remains unverified. Guided setup tests reject changes saved during instruction review. Portable backup tests verify instruction history round trips and credential exclusion.
+
+Not verified: automated rendered desktop/mobile/dark-mode UI (browser host unavailable and native window capture inconsistent); actual agent consumption of generated files; native macOS startup; race detector (CGO toolchain unavailable). No deployment has been performed. Later-phase Cursor/MCP/profile/project functionality remains outside this initial implementation.
+
+Local preview uses an isolated temporary SQLite database at port 8766; the user approved the simplified direction. Tests run before the isolation fix wrote fixture skills into the real Windows `.agents/skills` directory; those files were disclosed and left untouched because their prior contents were not recorded.
+
+The new brief supersedes the original V0 scope below. Evolve the existing application into a central AI-agent configuration manager, preserving the skill library and CLI. The initial delivery centres on shared instructions, registered machines, immutable configuration history, safe automatic delivery, and Codex, Claude Code, and Gemini CLI adapters. Cursor, MCP management, advanced profiles, and project rules follow later.
+
+### Research findings
+
+These are capabilities documented by their publishers, not independently tested runtime guarantees. Sources reviewed 14 November 2026; maintenance and release quality need further verification before depending on competitor code.
+
+| Project | Documented capabilities | Implication |
+| --- | --- | --- |
+| [Pigi](https://pigi.dev/) | Dashboard for agents, skills, MCPs and guidelines; project profiles; native configuration sync; optional post-merge hook; local environment secret references | Central configuration alone is not a differentiator. Focus on unattended machine delivery and understandable status. |
+| [Toolport](https://toolport.app/) | Desktop MCP gateway, agent detection, OS keychain storage, backups, paid cross-machine sync | Cross-machine sync is already offered. Avoid competing on MCP breadth in the MVP. |
+| [agentsync](https://github.com/x0c/agentsync) | Local canonical instructions, skills and MCPs; adapters; watcher; backups and rollback | Useful adapter and preservation reference. Its README describes local sync rather than a central device dashboard. |
+| [brainctl](https://github.com/Rorogogogo/brainctl/) | Local web dashboard, profiles, one-shot sync and atomic backups; README says development moved to NoMoreIDE | Investigate the successor before treating brainctl as an actively maintained competitor. |
+| [chezmoi](https://www.chezmoi.io/) | Cross-machine dotfiles, templates, diff/merge tools, password-manager integrations | Learn from its explicit source/target state and machine-specific rendering. |
+
+Opportunity hypothesis: a small self-hosted service with excellent visibility into delivery, safe treatment of local changes, and minimal setup. This is a product hypothesis, not a verified absence of competing features.
+
+### Proposed architecture
+
+Retain Go, server-rendered HTML, progressive JavaScript, and SQLite for the first self-hosted release. Keep one server process and a separate cross-platform Go client process; avoid a frontend rewrite, queue infrastructure, and WebSockets until required. Keep deployment compatible with the existing systemd/Caddy and Docker options. PostgreSQL is a later option if concurrent hosted usage warrants it.
+
+Reuse existing users, sessions, token hashing, audit events and skills. Add:
+
+- `configurations`: ID, owner, name, current revision, created/updated timestamps.
+- `configuration_revisions`: immutable ID, configuration ID, sequence, Markdown content, content hash, author, creation time, optional restored-from ID; unique configuration/sequence.
+- `devices`: ID, owner, name, platform, credential hash, last-seen time, revoked time.
+- `device_agents`: device ID, adapter ID/version, detected agent version, supported capabilities; unique device/adapter.
+- `device_assignments`: device ID, configuration ID, desired revision; owner-scoped foreign-key validation.
+- `device_sync_status`: device/adapter, desired revision, applied revision, result, redacted error code, report time, content hash.
+
+All reads and writes must enforce ownership. Publish a revision and advance its desired pointer in one transaction. Editing uses optimistic concurrency; conflicting browser edits return 409. Rollback creates a new revision containing the selected historical content, preserving the audit trail.
+
+### API outline
+
+Authenticated browser requests retain CSRF protection. Device credentials are independently revocable and cannot edit central configuration.
+
+- `GET/POST /api/v1/configurations`; `GET/PUT /api/v1/configurations/{id}` with expected revision.
+- `GET /api/v1/configurations/{id}/revisions`; `POST /api/v1/configurations/{id}/restore`.
+- `POST /api/v1/device-enrolments`: signed-in user creates a short-lived, single-use registration token.
+- `POST /api/v1/devices/register`: exchange registration token for a device-scoped credential, shown once.
+- `GET /api/v1/devices`; `DELETE /api/v1/devices/{id}` revokes access.
+- `GET /api/v1/sync/manifest`: device-scoped desired revisions and hashes, ETag/304 support.
+- `GET /api/v1/sync/revisions/{id}`: only revisions assigned to that device.
+- `POST /api/v1/sync/status`: bounded, idempotent per-agent status report; never upload file contents or secrets.
+
+### Client and preservation contract
+
+Poll every 45 seconds with jitter, bounded exponential retry and request timeouts. Continue using the last valid local files when offline. Only download changed content. Run as the signed-in user through native user-level service mechanisms; never require elevated file access for normal sync.
+
+Adapters detect capabilities, resolve local paths, render deterministic bytes, validate and apply. The server selects adapter identifiers, never arbitrary filesystem destinations or shell commands. Verify official agent path and instruction-loading behaviour before implementing each adapter, including custom home directories and session reload requirements.
+
+Store a local manifest of last-applied hashes and revision IDs. Before replacing an existing target, compare its bytes with that baseline. Unknown existing files require explicit adoption; changed files produce a conflict and stay intact. Back up before writing, stage beside the destination, validate, then replace atomically using platform-appropriate operations. Reject unsafe symlinks and overlapping managed paths. Recheck before replacement and document the remaining concurrent external-writer limitation. Track each agent separately so partial application is visible and recoverable after a crash.
+
+Local overrides remain local. No automatic upload. Preserve content outside a managed section if a section-based adapter is selected; never assume appending text guarantees semantic precedence in an LLM. The proposed composition order is global, agent, machine profile, project, local override. Only global instructions are required for the first vertical slice. Structured settings will need explicit merge rules, and each adapter must expose unsupported combinations.
+
+MCP secrets remain out of scope for the MVP. Later use local credential references, never centrally distributed credential values. Configuration is instruction text, not executable installation instructions. Do not execute remote hooks.
+
+### Interface direction
+
+Use `example.png` as the information-hierarchy reference: a concise status summary, global policies, then connected machines. Apply restrained system typography, neutral surfaces, generous spacing, subtle separators, and colour primarily for actionable status. Remove the decorative grid and oversized boxed headers. Support dark mode without making every surface a bordered card.
+
+Primary navigation: Overview, Instructions, Machines, Skills, History. Keep setup and account tools secondary. Existing collections and imports remain accessible within Skills. Do not present later-phase MCP/profile controls as working features.
+
+Only report “All synced” when every assigned active device has acknowledged the desired revision recently. Distinguish pending, synced, offline, conflict and error using text as well as colour. Empty states must guide registration or instruction creation; never invent machines or successful syncs. Preview generated output before publication and explain when an agent needs a new session to load it.
+
+### Delivery phases and acceptance evidence
+
+1. Redesign the existing shell and skill views; verify real browser layouts on desktop/mobile, keyboard focus, contrast and dark mode while preserving current workflows.
+2. Add global instruction editing, immutable revisions and restore; test ownership isolation, CSRF, concurrent edits and history integrity.
+3. Add enrolment, revocable devices, adapters and polling; test registration replay, wrong-device access, unchanged responses, retry/offline behaviour, local conflicts, atomic replacement and crash recovery in temporary homes.
+4. Connect the overview to actual per-agent acknowledgements; exercise edit → publish → poll → apply → report → rollback across Windows, macOS and Linux. Build-only checks do not prove native service installation or filesystem semantics.
+5. Expand to Cursor, shared skills, profiles and MCP credential references after the first delivery loop is reliable.
+
+Pending user preferences: full MVP versus UI/research first, confirmation of preserving existing features, initial hosting audience, and local-edit policy. The choices above are recommendations rather than received answers.
+
 ## Summary
 
 SkillsDex is a private hosted skill library plus CLI for syncing reusable AI-agent skills across machines. The first version targets Codex only and installs selected Markdown-based skills into the user's global Codex skills directory.

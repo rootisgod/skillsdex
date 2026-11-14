@@ -11,6 +11,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"time"
 )
 
 func (a *app) render(w http.ResponseWriter, r *http.Request, u *User, title string, body template.HTML) {
@@ -491,17 +492,18 @@ func skillsPage(skills, allSkills []Skill, archived bool, selectedTag string) te
 		}
 	}
 	tagOptions := skillTagOptions(allSkills)
-	b.WriteString(`<header class="pagehead hero-head"><div><p class="eyebrow">Library</p><h1>Skills</h1><p>Browse, import, revise, and install reusable agent workflows.</p><div class="metrics"><span><strong>` + fmt.Sprintf("%d", active) + `</strong> active</span><span><strong>` + fmt.Sprintf("%d", archivedCount) + `</strong> archived</span></div></div><div class="actions"><a class="button" href="/skills/new">` + iconLabel("plus", "New Skill") + `</a> `)
-	b.WriteString(`<a class="button secondary" href="/skills/import">` + iconLabel("import", "Import") + `</a> `)
-	b.WriteString(`<a class="button secondary" href="/skills/top">` + iconLabel("spark", "Top Skills") + `</a> `)
-	b.WriteString(`<a class="button secondary" href="/skills/export">` + iconLabel("download", "Export") + `</a> `)
-	b.WriteString(`<a class="button secondary" href="/skills/export/github">` + iconLabel("download", "GitHub Export") + `</a> `)
+	b.WriteString(`<header class="pagehead skills-heading"><div><h1>Skills</h1><p>Reusable instructions for the work you do often.</p></div></header><div class="library-toolbar"><p class="library-count">` + fmt.Sprintf("%d skills", active))
 	if archived {
-		b.WriteString(`<a class="button ghost" href="/skills">Hide archived</a>`)
-	} else {
-		b.WriteString(`<a class="button ghost" href="/skills?archived=1">` + iconLabel("archive", "Show archived") + `</a>`)
+		b.WriteString(fmt.Sprintf(" · %d archived", archivedCount))
 	}
-	b.WriteString(`</div><div class="page-art skills-art" aria-hidden="true"><span class="art-node">SKILL.md</span><span class="art-node">sync</span><span class="art-node">codex</span></div></header>`)
+	b.WriteString(`</p><div class="library-actions"><details class="library-menu"><summary class="button">` + iconLabel("plus", "Add skill") + `</summary><div class="library-menu-items"><a href="/skills/new">Create a skill</a><a href="/skills/import">Import a skill</a><a href="/skills/top">Discover skills</a></div></details><details class="library-menu"><summary class="button ghost">More</summary><div class="library-menu-items"><a href="/skills/export">Download backup</a><a href="/skills/export/github">Export for GitHub</a>`)
+	if archived {
+		b.WriteString(`<a href="` + html.EscapeString(skillsURL(false, selectedTag)) + `">Hide archived</a>`)
+	} else {
+		b.WriteString(`<a href="` + html.EscapeString(skillsURL(true, selectedTag)) + `">Show archived</a>`)
+	}
+	b.WriteString(`</div></details></div></div>`)
+	b.WriteString(`<details class="library-install"><summary>Use these skills on your computer</summary><div><p>Open a skill for its install command. If this is your first time, <a href="/setup">set up the SkillsDex CLI</a>.</p><p>To install your recommended skills:</p><pre>skillsdex install-defaults</pre><p>To preview updates to installed skills:</p><pre>skillsdex sync --dry-run --strict</pre><a href="/help">More installation options</a></div></details>`)
 	if len(tagOptions) > 0 {
 		b.WriteString(`<nav class="tag-filter" aria-label="Tag filter"><a class="pill`)
 		if selectedTag == "" {
@@ -517,21 +519,20 @@ func skillsPage(skills, allSkills []Skill, archived bool, selectedTag string) te
 		}
 		b.WriteString(`</nav>`)
 	}
-	b.WriteString(`<div class="split wide"><section class="surface data-surface"><table><thead><tr><th>Identifier</th><th>Name</th><th>Revision</th><th>Updated</th><th>Status</th></tr></thead><tbody>`)
+	b.WriteString(`<section class="surface library-list"><table><caption class="sr-only">Your reusable skills</caption><thead><tr><th scope="col">Skill</th><th scope="col">Version</th><th scope="col">Updated</th></tr></thead><tbody>`)
 	if len(skills) == 0 {
 		msg := `No skills yet.`
 		if selectedTag != "" {
 			msg = `No skills match tag ` + html.EscapeString(selectedTag) + `.`
 		}
-		b.WriteString(`<tr><td colspan="5"><div class="empty"><strong>` + msg + `</strong><br><a href="/skills/new">Create the first skill</a></div></td></tr>`)
+		b.WriteString(`<tr><td colspan="3"><div class="empty"><strong>` + msg + `</strong><p>Add instructions you reuse, or import a skill you already have.</p><a href="/skills/new">Create a skill</a></div></td></tr>`)
 	}
 	for _, s := range skills {
-		status := "active"
-		if s.ArchivedAt != "" {
-			status = "archived"
-		}
 		id := s.OwnerSlug + "/" + s.Slug
-		b.WriteString(`<tr><td><a class="identifier" href="/skills/` + html.EscapeString(id) + `">` + html.EscapeString(id) + `</a></td><td><div class="cell-title"><strong>` + html.EscapeString(s.Name) + `</strong><div class="muted">` + html.EscapeString(s.ShortDescription) + `</div></div>`)
+		b.WriteString(`<tr><td><a class="library-skill-name" href="/skills/` + html.EscapeString(id) + `">` + html.EscapeString(s.Name) + `</a><p class="library-description">` + html.EscapeString(s.ShortDescription) + `</p><div class="library-skill-meta"><span class="library-identifier">` + html.EscapeString(id) + `</span>`)
+		if s.ArchivedAt != "" {
+			b.WriteString(`<span class="pill">archived</span>`)
+		}
 		if s.RecommendedDefault {
 			b.WriteString(`<div class="row-tags"><span class="pill active">recommended</span></div>`)
 		}
@@ -548,9 +549,9 @@ func skillsPage(skills, allSkills []Skill, archived bool, selectedTag string) te
 			}
 			b.WriteString(`</div>`)
 		}
-		b.WriteString(`</td><td><span class="rev">r` + fmt.Sprintf("%d", s.RevisionNumber) + `</span></td><td>` + s.UpdatedAt.Format("2006-01-02 15:04") + `</td><td><span class="pill ` + status + `">` + status + `</span></td></tr>`)
+		b.WriteString(`</div></td><td class="library-version">v` + fmt.Sprintf("%d", s.RevisionNumber) + `</td><td class="library-updated"><time datetime="` + s.UpdatedAt.Format(time.RFC3339) + `" title="` + s.UpdatedAt.Format("2006-01-02 15:04 MST") + `">` + s.UpdatedAt.Format("2 Jan 2006") + `</time></td></tr>`)
 	}
-	b.WriteString(`</tbody></table></section><aside class="panel sticky"><div class="panel-head"><div class="panel-icon">` + icon("bolt") + `</div><div><h2>Install Skills</h2><p>Run the CLI from a new machine after login.</p></div></div><div class="command-card"><span>Default target</span><pre>skillsdex config set default_target codex</pre></div><div class="command-card"><span>Named install set</span><pre>skillsdex install-set laptop</pre></div><div class="command-card"><span>Pinned install set</span><pre>skillsdex install-pinned</pre></div><div class="command-card"><span>Recommended defaults</span><pre>skillsdex install-defaults</pre></div><div class="command-card"><span>Single skill</span><pre>skillsdex install admin/five-advisor-review</pre></div><div class="command-card"><span>Sync managed installs</span><pre>skillsdex sync --dry-run --strict</pre></div></aside></div>`)
+	b.WriteString(`</tbody></table></section>`)
 	return template.HTML(b.String())
 }
 
@@ -615,6 +616,7 @@ func skillImportPage(source, msg string, results []skillImportResult, searchQuer
 	</form>`)
 	b.WriteString(`<form method="post" action="/skills/import" enctype="multipart/form-data" class="backup-restore-form">
 		<label>Restore Backup <input type="file" name="restore_zip" accept=".zip,application/zip" required></label>
+		<p class="muted">Restores skills and appends saved instruction history. The latest restored instructions will sync to connected machines. Machine inventory is included for reference; credentials are excluded, so new machines need to reconnect.</p>
 		<div class="actions"><button type="submit">` + iconLabel("import", "Restore") + `</button></div>
 	</form>`)
 	if msg != "" {
@@ -1174,24 +1176,30 @@ var layoutTmpl = `<!doctype html>
 	<link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-	<div class="app-shell">
-		<nav>
-			<a class="brand" href="/skills"><span class="brand-mark">SD</span><span>SkillsDex</span></a>
+	<a class="skip-link" href="#main-content">Skip to content</a>
+	<div class="app-shell {{if .User}}authenticated{{end}}">
+		<nav class="app-nav" aria-label="Main navigation">
+			<a class="brand" href="/overview"><span class="brand-mark">SD</span><span>SkillsDex</span></a>
 			{{if .User}}
 				<div class="nav-links">
+					<a href="/overview" data-nav="/overview">` + iconLabel("layers", "Overview") + `</a>
+					<a href="/instructions" data-nav="/instructions">` + iconLabel("book", "Instructions") + `</a>
+					<a href="/machines" data-nav="/machines">` + iconLabel("layers", "Machines") + `</a>
 					<a href="/skills" data-nav="/skills">` + iconLabel("book", "Skills") + `</a>
+					<details class="nav-admin nav-more"><summary>More</summary>
 					<a href="/setup" data-nav="/setup">` + iconLabel("check", "Setup") + `</a>
-					<a href="/sets" data-nav="/sets">` + iconLabel("layers", "Sets") + `</a>
-					<a href="/skills/top" data-nav="/skills/top">` + iconLabel("spark", "Top Skills") + `</a>
+					<a href="/sets" data-nav="/sets">` + iconLabel("layers", "Collections") + `</a>
+					<a href="/skills/top" data-nav="/skills/top">` + iconLabel("spark", "Discover skills") + `</a>
 					<a href="/help" data-nav="/help">` + iconLabel("help", "Help") + `</a>
 				<a href="/tokens" data-nav="/tokens">` + iconLabel("key", "API Tokens") + `</a>
-				{{if .User.IsAdmin}}<a href="/admin/users" data-nav="/admin/users">` + iconLabel("users", "Users") + `</a><a href="/admin/invites" data-nav="/admin/invites">` + iconLabel("key", "Invites") + `</a><a href="/admin/audit" data-nav="/admin/audit">` + iconLabel("archive", "Audit") + `</a><a href="/admin/maintenance" data-nav="/admin/maintenance">` + iconLabel("trash", "Maintenance") + `</a>{{end}}
+				{{if .User.IsAdmin}}<details class="nav-admin"><summary>Administration</summary><a href="/admin/users" data-nav="/admin/users">` + iconLabel("users", "Users") + `</a><a href="/admin/invites" data-nav="/admin/invites">` + iconLabel("key", "Invites") + `</a><a href="/admin/audit" data-nav="/admin/audit">` + iconLabel("archive", "Audit") + `</a><a href="/admin/maintenance" data-nav="/admin/maintenance">` + iconLabel("trash", "Maintenance") + `</a></details>{{end}}
+					</details>
 			</div>
 			<button class="theme-toggle icon-button" type="button" aria-label="Toggle color theme" data-theme-toggle>` + icon("sun") + `<span class="button-label">Theme</span></button>
 			<form method="post" action="/logout">{{.CSRFField}}<button class="link nav-logout" type="submit">` + icon("logout") + `<span class="button-label">Logout {{.User.Username}}</span></button></form>
 			{{end}}
 		</nav>
-		<main>{{.Body}}</main>
+		<main id="main-content" tabindex="-1">{{.Body}}</main>
 	</div>
 	<script>
 	(function() {
@@ -1218,6 +1226,8 @@ var layoutTmpl = `<!doctype html>
 			if (target === "/skills" && path.indexOf("/skills/top") === 0) return;
 			if (path === target || (target !== "/skills" && path.indexOf(target + "/") === 0) || (target === "/skills" && path.indexOf("/skills") === 0)) {
 				link.setAttribute("aria-current", "page");
+				var group = link.closest("details");
+				while (group) { group.open = true; group = group.parentElement.closest("details"); }
 			}
 		});
 	})();

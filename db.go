@@ -204,6 +204,37 @@ func migrate(db *sql.DB) error {
 			created_at TEXT NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_skills_owner ON skills(owner_id, archived_at, updated_at);`,
+		`CREATE TABLE IF NOT EXISTS instruction_revisions (
+			user_id TEXT NOT NULL REFERENCES users(id),
+			revision INTEGER NOT NULL,
+			body TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			restored_from INTEGER,
+			PRIMARY KEY(user_id, revision)
+		);`,
+		`CREATE TABLE IF NOT EXISTS device_enrolments (
+			token_hash TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL REFERENCES users(id),
+			expires_at TEXT NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS devices (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL REFERENCES users(id),
+			name TEXT NOT NULL,
+			platform TEXT NOT NULL,
+			credential_hash TEXT NOT NULL UNIQUE,
+			created_at TEXT NOT NULL,
+			last_seen_at TEXT,
+			revoked_at TEXT
+		);`,
+		`CREATE TABLE IF NOT EXISTS device_agent_status (
+			device_id TEXT NOT NULL REFERENCES devices(id),
+			agent TEXT NOT NULL,
+			applied_revision INTEGER NOT NULL DEFAULT 0,
+			state TEXT NOT NULL,
+			reported_at TEXT NOT NULL,
+			PRIMARY KEY(device_id, agent)
+		);`,
 		`CREATE INDEX IF NOT EXISTS idx_revisions_skill ON skill_revisions(skill_id, revision_number);`,
 		`CREATE INDEX IF NOT EXISTS idx_install_sets_user ON install_sets(user_id, updated_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_install_set_skills_set ON install_set_skills(set_id, position);`,

@@ -1,5 +1,55 @@
 # SkillsDex
 
+## Agent configuration preview
+
+The dashboard now includes **Overview**, **Instructions**, and **Machines** alongside the existing skill library. Save global Markdown instructions with immutable version history, restore an earlier version, and deliver updates to registered machines using the CLI watcher.
+
+1. Open **Instructions** and save a version.
+2. Open **Machines**, choose **Connect a machine**, and copy the single-use code (valid for ten minutes).
+3. Run `skillsdex agent setup --server https://YOUR_SERVER` in that machine's terminal. Paste the code, review the detected agents and instructions, then choose automatic updates at login.
+
+For scripting, connect manually. In PowerShell:
+
+   ```powershell
+   Read-Host 'Connection code' | skillsdex agent connect --server https://YOUR_SERVER --name 'Main desktop'
+   skillsdex agent sync
+   skillsdex agent watch
+   ```
+
+   In a Unix shell:
+
+   ```sh
+   read -r connection_code
+   printf '%s\n' "$connection_code" | skillsdex agent connect --server https://YOUR_SERVER --name 'Laptop'
+   unset connection_code
+   skillsdex agent sync
+   skillsdex agent watch
+   ```
+
+The watcher detects `codex`, `claude`, and `gemini` executables on its PATH. It polls approximately every 45–50 seconds, backs off after errors, and keeps existing files usable offline. Start it with the same home directory, PATH, and `CODEX_HOME` as your coding agents. HTTPS is required except on loopback addresses used for development. Device credentials cannot access the skill-library API.
+
+Targets are `~/.codex/AGENTS.md` (or `$CODEX_HOME/AGENTS.md`), `~/.claude/CLAUDE.md`, and `~/.gemini/GEMINI.md`. Existing unmanaged files and modified managed files are preserved and reported as conflicts. Run `skillsdex agent resolve codex` to compare local and shared instructions, then repeat with `--keep-mine` or `--use-shared`. Keep mine preserves local content across future updates until you choose Use shared. Local contents are never uploaded. Use shared backs up existing content beside the file (`.skillsdex-backup-*`) before replacing it. Run `skillsdex agent sync` to report your choice, or wait for the next background sync. Choices can be made while the watcher sleeps; retry if a sync is in progress. A restored dashboard version is delivered as a new version. Start a fresh agent session to read changed instructions.
+
+Setup offers automatic startup; enable it later with `skillsdex agent autostart`. Use an installed binary at a stable path. Windows encrypts the device connection with user-bound DPAPI; Unix uses an owner-only connection file. The overview reports **Files up to date**, not proof that an LLM has loaded or obeyed the files. Reports older than three minutes appear as **Offline · updates on reconnect**, without treating sleeping computers as errors. An OS lock prevents concurrent writes.
+
+Device state is stored separately from library authentication in `device.json` and `instruction-sync.json` under the SkillsDex state directory. Revoke a lost machine in **Machines**. Do not commit these local files or share the device credential.
+
+### Start the watcher at login
+
+Connect the machine and verify `skillsdex agent sync` first. Run `skillsdex agent autostart` to install and start the appropriate service. These are user-level services; they run with your account and do not put credentials in their definitions. They capture PATH, SKILLSDEX_HOME, and CODEX_HOME from setup. Identical installations can be retried; customised service definitions are preserved.
+
+- **Windows:** creates the limited scheduled task `SkillsDex Agent Sync`. Inspect with `Get-ScheduledTask -TaskName 'SkillsDex Agent Sync'`, stop with `Stop-ScheduledTask -TaskName 'SkillsDex Agent Sync'`, and remove with `Unregister-ScheduledTask -TaskName 'SkillsDex Agent Sync'`. The runner is `agent-watch.ps1` in the state directory.
+- **Linux:** creates `~/.config/systemd/user/skillsdex-agent.service`. Inspect with `systemctl --user status skillsdex-agent` and `journalctl --user -u skillsdex-agent`. Stop and disable with `systemctl --user disable --now skillsdex-agent`; delete the unit file and run `systemctl --user daemon-reload` to remove it. User-session lifetime depends on your system configuration.
+- **macOS:** creates `~/Library/LaunchAgents/org.skillsdex.agent.plist`. Inspect with `launchctl print gui/$(id -u)/org.skillsdex.agent`. Remove with `launchctl bootout gui/$(id -u)/org.skillsdex.agent` and delete the plist. Native macOS startup still needs validation on a Mac.
+
+Service templates do not expand shell expressions inside executable paths. Use absolute paths and the same custom state/agent home settings as the registration session. Stop any foreground watcher before starting a service.
+
+### Configuration recovery
+
+Portable backups include skills, instruction history, and machine inventory. `skillsdex backup inspect --file backup.zip` or `skillsdex backup restore --file backup.zip --dry-run` validates the archive and reports its contents. Restore appends instruction history as new revisions and makes the latest restored content current, ready to sync to connected machines. Machine inventory is reference information, not restored access. Credentials, sessions, and enrollment codes are excluded; reconnect machines to a replacement server.
+
+Portable restore retains per-skill results and then restores instruction history transactionally; it is not an atomic whole-server restore. Use the production SQLite backup for full-service recovery, including accounts and collections.
+
 Private dotfiles for AI-agent skills.
 
 SkillsDex is a private hosted skill library plus CLI for syncing reusable Codex skills across machines. The user CLI is `skillsdex`; the web app and JSON API run from the `skillsdexd` server binary with SQLite storage and Codex install/sync support.

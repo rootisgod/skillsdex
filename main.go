@@ -17,6 +17,12 @@ func RunCLI(args []string) int {
 	}
 
 	switch args[0] {
+	case "agent":
+		if err := runAgentCommand(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "agent: %v\n", err)
+			return 1
+		}
+		return 0
 	case "login":
 		if err := runLogin(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "login: %v\n", err)
@@ -254,6 +260,12 @@ Usage:
   skillsdex backup export --out PATH
   skillsdex backup inspect --file PATH [--json]
   skillsdex backup restore --file PATH [--dry-run] [--json]
+  skillsdex agent setup --server URL
+  skillsdex agent connect --server URL [--name NAME]
+  skillsdex agent sync
+  skillsdex agent watch
+  skillsdex agent autostart
+  skillsdex agent resolve AGENT [--keep-mine|--use-shared]
   skillsdex admin reset-password [--db PATH] [--username admin] [--password PASSWORD]
   skillsdex show <owner>/<slug> [--raw|--file PATH]
   skillsdex mark <owner>/<slug> [--pinned|--unpinned] [--recommended|--not-recommended] [--apply|--dry-run] [--yes|--no]

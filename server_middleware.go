@@ -39,7 +39,11 @@ func (a *app) requireWeb(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		if r.Method == http.MethodPost {
-			r.Body = http.MaxBytesReader(w, r.Body, maxSkillsDexExportBytes)
+			limit := int64(maxSkillsDexExportBytes)
+			if r.URL.Path == "/instructions" {
+				limit = 128 * 1024
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
 		}
 		if r.Method == http.MethodPost && !a.validCSRF(r, c.Value) {
 			http.Error(w, "forbidden", http.StatusForbidden)
@@ -98,7 +102,7 @@ func webUser(r *http.Request) *User {
 }
 
 func (a *app) handleHome(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/skills", http.StatusFound)
+	http.Redirect(w, r, "/overview", http.StatusFound)
 }
 
 func (a *app) remoteAddr(r *http.Request) string {

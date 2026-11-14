@@ -22,17 +22,18 @@ import (
 func captureStdout(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
 	old := os.Stdout
-	r, w, err := os.Pipe()
+	w, err := os.CreateTemp(t.TempDir(), "stdout-*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	os.Stdout = w
+	defer func() { os.Stdout = old; w.Close() }()
 	runErr := fn()
-	if err := w.Close(); err != nil {
+	if _, err := w.Seek(0, io.SeekStart); err != nil {
 		t.Fatal(err)
 	}
 	os.Stdout = old
-	out, err := io.ReadAll(r)
+	out, err := io.ReadAll(w)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +106,7 @@ func TestDaemonRejectsUnknownSubcommand(t *testing.T) {
 
 func TestRunNewSkillScaffoldsTemplateFolder(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	target := filepath.Join(home, "review-skill")
@@ -189,7 +190,7 @@ func TestRunNewSkillReportsAvailableTemplates(t *testing.T) {
 
 func TestRunConfigManagesDefaultTarget(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	out, err := captureStdout(t, func() error {
@@ -238,7 +239,7 @@ func TestRunConfigManagesDefaultTarget(t *testing.T) {
 
 func TestInstallCommandsResolveConfiguredDefaultTarget(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	if err := saveLocalConfig(LocalConfig{DefaultTarget: "unknown"}); err != nil {
@@ -251,7 +252,7 @@ func TestInstallCommandsResolveConfiguredDefaultTarget(t *testing.T) {
 
 func TestRunInstallDefaultsInstallsRecommendedSkills(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
@@ -297,7 +298,7 @@ func TestRunInstallDefaultsInstallsRecommendedSkills(t *testing.T) {
 
 func TestInstallSkillResponseHonorsYesNoForUnmanagedOverwrite(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	resp := skillResponse{
@@ -342,7 +343,7 @@ func TestInstallSkillResponseHonorsYesNoForUnmanagedOverwrite(t *testing.T) {
 
 func TestInstallSkillResponseDryRunDoesNotPromptForOverwriteOrRemoval(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	resp := skillResponse{
@@ -431,7 +432,7 @@ func TestInstallSkillResponseDryRunDoesNotPromptForOverwriteOrRemoval(t *testing
 
 func TestInstallSkillResponseWritesSupportingFiles(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	resp := skillResponse{
@@ -477,7 +478,7 @@ func TestInstallSkillResponseWritesSupportingFiles(t *testing.T) {
 
 func TestInstallSkillResponseRequiresTrustForNewExecutableFiles(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	resp := skillResponse{
@@ -503,7 +504,7 @@ func TestInstallSkillResponseRequiresTrustForNewExecutableFiles(t *testing.T) {
 
 func TestInstallSkillResponseDryRunPrintsPackageFiles(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	resp := skillResponse{
@@ -547,7 +548,7 @@ func TestInstallSkillResponseDryRunPrintsPackageFiles(t *testing.T) {
 
 func TestRunUninstallRemovesSupportingFiles(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	resp := skillResponse{
@@ -591,7 +592,7 @@ func TestRunUninstallRemovesSupportingFiles(t *testing.T) {
 
 func TestRunUninstallProtectsModifiedSupportingFile(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	resp := skillResponse{
@@ -635,7 +636,7 @@ func TestRunUninstallProtectsModifiedSupportingFile(t *testing.T) {
 
 func TestRunDoctorShowsFirstRunNextSteps(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	out, err := captureStdout(t, func() error {
@@ -716,7 +717,7 @@ func TestRunDoctorShowsFirstRunNextSteps(t *testing.T) {
 
 func TestRunDoctorChecksServerAndInstallStatus(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
@@ -833,7 +834,7 @@ func TestRunDoctorChecksServerAndInstallStatus(t *testing.T) {
 
 func TestRunDoctorRefreshReportsSourceUpdates(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
@@ -910,7 +911,7 @@ func TestRunDoctorRefreshReportsSourceUpdates(t *testing.T) {
 
 func TestRunDoctorWarnsAboutOpenAuthFile(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	authPath := filepath.Join(home, ".skillsdex", "auth.json")
@@ -953,7 +954,7 @@ func TestRunDoctorWarnsAboutOpenAuthFile(t *testing.T) {
 
 func TestRunDoctorReportsInvalidConfigDefaultTarget(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 	if err := saveLocalConfig(LocalConfig{DefaultTarget: "unknown"}); err != nil {
 		t.Fatal(err)
@@ -978,7 +979,7 @@ func TestRunDoctorReportsInvalidConfigDefaultTarget(t *testing.T) {
 
 func TestRunDoctorFixesOpenLocalStatePermissions(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	authPath := filepath.Join(home, ".skillsdex", "auth.json")
@@ -1053,7 +1054,7 @@ func TestRunDoctorFixesOpenLocalStatePermissions(t *testing.T) {
 
 func TestCleanFirstRunCLILoop(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
@@ -1285,7 +1286,7 @@ func TestCleanFirstRunCLILoop(t *testing.T) {
 
 func TestRunAdminResetPasswordRevokesAccess(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 	dbPath := filepath.Join(t.TempDir(), "skillsdex.db")
 	db, err := openDB(dbPath)
@@ -1357,7 +1358,7 @@ func TestRunAdminResetPasswordRevokesAccess(t *testing.T) {
 
 func TestRunSyncDryRunDoesNotWriteUpdate(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
@@ -1483,7 +1484,7 @@ func TestRunSyncDryRunDoesNotWriteUpdate(t *testing.T) {
 
 func TestRunInstalledStrictChecksLocalStatus(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	if out, err := captureStdout(t, func() error {
@@ -1572,7 +1573,7 @@ func TestRunInstalledStrictChecksLocalStatus(t *testing.T) {
 
 func TestRunInstalledRefreshChecksImportedSources(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	skillPath := filepath.Join(home, ".agents", "skills", "admin--imported", "SKILL.md")
@@ -1662,7 +1663,7 @@ func TestRunInstalledRefreshChecksImportedSources(t *testing.T) {
 
 func TestRunInstalledRefreshRequiresAuth(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 	if err := saveManifest(Manifest{Version: 1}); err != nil {
 		t.Fatal(err)
@@ -1676,7 +1677,7 @@ func TestRunInstalledRefreshRequiresAuth(t *testing.T) {
 
 func TestRunSyncUpdatesSupportingFilesAndRemovesStaleManagedFiles(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
@@ -1786,7 +1787,7 @@ func TestRunSyncUpdatesSupportingFilesAndRemovesStaleManagedFiles(t *testing.T) 
 
 func TestRunSyncReturnsErrorAfterRemoteIssuesButKeepsProcessing(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
@@ -1882,7 +1883,7 @@ func TestRunSyncReturnsErrorAfterRemoteIssuesButKeepsProcessing(t *testing.T) {
 
 func TestRunInstallPinnedInstallsPinnedSkills(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
@@ -1953,7 +1954,7 @@ func TestRunInstallPinnedInstallsPinnedSkills(t *testing.T) {
 
 func TestRunInstallSetInstallsOnlySetSkills(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	db, err := openDB(filepath.Join(t.TempDir(), "skillsdex.db"))
@@ -2026,7 +2027,7 @@ func TestRunInstallSetInstallsOnlySetSkills(t *testing.T) {
 
 func TestRunSkillsListsSkillsAsTextAndJSON(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	requests := 0
@@ -2099,7 +2100,7 @@ func TestRunSkillsListsSkillsAsTextAndJSON(t *testing.T) {
 
 func TestRunSetsListsAndShowsInstallSets(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	var sawList, sawShow bool
@@ -2183,7 +2184,7 @@ func TestRunSetsListsAndShowsInstallSets(t *testing.T) {
 
 func TestRunInvitesListsCreatesAndRevokes(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	inviteJSON := `{"invite":{"id":"inv_1","token_preview":"sdx_preview...abc123","created_by":"admin","created_at":"2030-06-08T00:00:00Z","expires_at":"2030-06-09T00:00:00Z"},"token":"sdx_fulltoken","url":"https://skillsdex.example/signup?invite=sdx_fulltoken"}`
@@ -2281,7 +2282,7 @@ func TestRunInvitesListsCreatesAndRevokes(t *testing.T) {
 
 func TestRunPluginsTracksListsAndDryRunsInstall(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	pluginJSON := `{"plugin":{"id":"plg_1","slug":"codex-autoresearch","name":"Codex Autoresearch","description":"Measured loops","source_url":"https://github.com/TheGreenCedar/codex-autoresearch","target":"laptop","install_command":"codex plugin install https://github.com/TheGreenCedar/codex-autoresearch","created_at":"2026-06-08T00:00:00Z","updated_at":"2026-06-08T01:02:00Z"}}`
@@ -2372,7 +2373,7 @@ func TestRunPluginsTracksListsAndDryRunsInstall(t *testing.T) {
 
 func TestRunShowPrintsPackageFile(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	const skillMarkdown = "---\nname: Folder Show\ndescription: Use when showing package files.\n---\n\n# Folder Show\n\nInstructions.\n"
@@ -2443,7 +2444,7 @@ func TestParseShowArgsRejectsUnsafeFilePath(t *testing.T) {
 
 func TestRunMarkPreviewsAndAppliesSkillFlags(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	current := Skill{
@@ -2608,7 +2609,7 @@ func TestAPIClientUsesBoundedContextRequests(t *testing.T) {
 
 func TestRunSetupPreviewsRecommendedDefaults(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2725,7 +2726,7 @@ func TestRunSetupChoosesSingleInstallSetBeforeDefaults(t *testing.T) {
 
 func TestRunSetupAppliesExplicitSetAndPreviewsSync(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2767,7 +2768,7 @@ func TestRunSetupAppliesExplicitSetAndPreviewsSync(t *testing.T) {
 
 func TestRunPublicSearchAndTopUseAuthenticatedAPI(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	var sawSearch, sawTop bool
@@ -2820,7 +2821,7 @@ func TestRunPublicSearchAndTopUseAuthenticatedAPI(t *testing.T) {
 
 func TestRunImportSourceUsesAuthenticatedAPI(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2858,7 +2859,7 @@ func TestRunImportSourceUsesAuthenticatedAPI(t *testing.T) {
 
 func TestRunImportSourceCanPreviewInstall(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	var sawImport, sawFetch bool
@@ -2991,7 +2992,7 @@ func TestRunImportSourceGitHubFolderInstallDryRunPreservesSupportingFiles(t *tes
 
 func TestRunImportSourceInstallFlagsRequireInstall(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	if err := runImportSource([]string{"@openclaw/review", "--dry-run"}); err == nil || !strings.Contains(err.Error(), "usage: skillsdex import-source") {
@@ -3001,7 +3002,7 @@ func TestRunImportSourceInstallFlagsRequireInstall(t *testing.T) {
 
 func TestRunPublishPreviewsLocalSkillFile(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	skillFile := filepath.Join(home, "SKILL.md")
@@ -3049,7 +3050,7 @@ func TestRunPublishPreviewsLocalSkillFile(t *testing.T) {
 
 func TestRunPublishAppliesLocalSkillFolderUpdate(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	dir := filepath.Join(home, "review")
@@ -3173,7 +3174,7 @@ func TestSkillInputFromLocalDirSkipsLocalMetadata(t *testing.T) {
 
 func TestRunPublishStrictBlocksWeakSkill(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	skillFile := filepath.Join(home, "SKILL.md")
@@ -3205,7 +3206,7 @@ func TestRunPublishStrictBlocksWeakSkill(t *testing.T) {
 
 func TestRunRefreshPreviewsAndAppliesSourceRefresh(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3305,7 +3306,7 @@ func TestRunRefreshPreviewsAndAppliesSourceRefresh(t *testing.T) {
 
 func TestRunRefreshAllFiltersImportedActiveSkills(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	var refreshed []string
@@ -3348,7 +3349,7 @@ func TestRunRefreshAllFiltersImportedActiveSkills(t *testing.T) {
 
 func TestRunRefreshAllStrictFailsWhenUpdatesAreAvailable(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3402,7 +3403,7 @@ func TestRunRefreshAllStrictFailsWhenUpdatesAreAvailable(t *testing.T) {
 
 func TestRunRefreshAllReturnsErrorWhenAnyRefreshFails(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3439,7 +3440,7 @@ func TestRunRefreshAllReturnsErrorWhenAnyRefreshFails(t *testing.T) {
 
 func TestRunLintChecksLocalSkillFile(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	path := filepath.Join(home, "SKILL.md")
@@ -3466,7 +3467,7 @@ func TestRunLintChecksLocalSkillFile(t *testing.T) {
 
 func TestRunLintChecksLocalSkillDirectory(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	dir := filepath.Join(home, "review-skill")
@@ -3501,7 +3502,7 @@ func TestRunLintChecksLocalSkillDirectory(t *testing.T) {
 
 func TestRunLintCanPrintJSON(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	path := filepath.Join(home, "SKILL.md")
@@ -3528,7 +3529,7 @@ func TestRunLintCanPrintJSON(t *testing.T) {
 
 func TestRunLintChecksRemoteSkillWithContext(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	var sawSkill, sawList bool
@@ -3571,7 +3572,7 @@ func TestRunLintChecksRemoteSkillWithContext(t *testing.T) {
 
 func TestRunLintAllChecksActiveRemoteSkills(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	var sawReview, sawWeak bool
@@ -3618,7 +3619,7 @@ func TestRunLintAllChecksActiveRemoteSkills(t *testing.T) {
 
 func TestRunLintAllCanPrintJSON(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3660,7 +3661,7 @@ func TestRunLintAllCanPrintJSON(t *testing.T) {
 
 func TestRunGitHubExportDownloadsRepoShape(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	var buf bytes.Buffer
@@ -3719,7 +3720,7 @@ func TestRunGitHubExportDownloadsRepoShape(t *testing.T) {
 
 func TestRunBackupExportAndRestoreUseAuthenticatedAPI(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	var backup bytes.Buffer
@@ -3843,7 +3844,7 @@ func TestRunBackupExportAndRestoreUseAuthenticatedAPI(t *testing.T) {
 
 func TestRunBackupInspectValidatesAndSummarizesLocalBackup(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("SKILLSDEX_HOME", filepath.Join(home, ".skillsdex"))
 
 	backup := testSkillsDexBackup(t, exportManifest{

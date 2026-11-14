@@ -127,16 +127,18 @@ func runBackup(args []string) error {
 }
 
 type backupInspectSummary struct {
-	ExportedAt      string             `json:"exported_at"`
-	User            string             `json:"user"`
-	SkillCount      int                `json:"skill_count"`
-	ActiveCount     int                `json:"active_count"`
-	ArchivedCount   int                `json:"archived_count"`
-	PinnedCount     int                `json:"pinned_count"`
-	Recommended     int                `json:"recommended_count"`
-	SourceBacked    int                `json:"source_backed_count"`
-	SupportingFiles int                `json:"supporting_file_count"`
-	Rows            []backupInspectRow `json:"skills"`
+	InstructionVersions int                `json:"instruction_versions"`
+	MachineInventory    int                `json:"machine_inventory"`
+	ExportedAt          string             `json:"exported_at"`
+	User                string             `json:"user"`
+	SkillCount          int                `json:"skill_count"`
+	ActiveCount         int                `json:"active_count"`
+	ArchivedCount       int                `json:"archived_count"`
+	PinnedCount         int                `json:"pinned_count"`
+	Recommended         int                `json:"recommended_count"`
+	SourceBacked        int                `json:"source_backed_count"`
+	SupportingFiles     int                `json:"supporting_file_count"`
+	Rows                []backupInspectRow `json:"skills"`
 }
 
 type backupInspectRow struct {
@@ -173,6 +175,10 @@ func readLocalBackupFile(file string) ([]byte, error) {
 }
 
 func inspectSkillsDexBackup(data []byte) (backupInspectSummary, error) {
+	configuration, err := readConfigurationBackup(data)
+	if err != nil {
+		return backupInspectSummary{}, err
+	}
 	manifest, err := backupManifestFromData(data)
 	if err != nil {
 		return backupInspectSummary{}, err
@@ -185,6 +191,10 @@ func inspectSkillsDexBackup(data []byte) (backupInspectSummary, error) {
 		ExportedAt: manifest.ExportedAt,
 		User:       manifest.User,
 		SkillCount: len(restored),
+	}
+	if configuration != nil {
+		summary.InstructionVersions = len(configuration.Instructions)
+		summary.MachineInventory = len(configuration.Machines)
 	}
 	for i, item := range restored {
 		in := item.Input
@@ -288,6 +298,7 @@ func backupSourceLabel(in SkillInput) string {
 
 func printBackupInspectSummary(file string, summary backupInspectSummary) error {
 	fmt.Printf("Backup is valid: %s\n", file)
+	fmt.Printf("Configuration: %d instruction version(s), %d machine inventory record(s). Machine credentials are excluded; restored machines must reconnect.\n", summary.InstructionVersions, summary.MachineInventory)
 	if summary.User != "" || summary.ExportedAt != "" {
 		fmt.Printf("Exported by %s at %s\n", valueOrDash(summary.User), valueOrDash(summary.ExportedAt))
 	}

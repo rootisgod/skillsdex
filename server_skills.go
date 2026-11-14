@@ -210,6 +210,10 @@ func (a *app) importSource(r *http.Request, u *User, source string) ([]skillImpo
 }
 
 func (a *app) restoreSkillsDexExport(ctx context.Context, u *User, data []byte) ([]skillImportResult, error) {
+	configuration, err := readConfigurationBackup(data)
+	if err != nil {
+		return nil, err
+	}
 	inputs, err := importSkillInputsFromSkillsDexExport(data, u.Username)
 	if err != nil {
 		return nil, err
@@ -230,6 +234,9 @@ func (a *app) restoreSkillsDexExport(ctx context.Context, u *User, data []byte) 
 			status += " and archived"
 		}
 		results = append(results, skillImportResult{Identifier: s.OwnerSlug + "/" + s.Slug, Name: s.Name, Status: status})
+	}
+	if err := restoreConfigurationBackup(ctx, a.db, u.ID, configuration); err != nil {
+		return results, err
 	}
 	return results, nil
 }
@@ -315,6 +322,9 @@ func buildSkillsExport(ctx context.Context, db *sql.DB, u *User) ([]byte, error)
 	}
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
+	if err := writeConfigurationBackup(ctx, db, u.ID, zw); err != nil {
+		return nil, err
+	}
 	manifest := exportManifest{ExportedAt: nowUTC().Format(time.RFC3339), User: u.Username}
 	for _, s := range skills {
 		files, _, err := currentSkillFiles(ctx, db, u.ID, s.OwnerSlug, s.Slug)
