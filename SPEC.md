@@ -4,7 +4,11 @@
 
 ### Implementation checkpoint
 
-Implemented in the current worktree: restrained sidebar/surface redesign; Overview, Instructions and Machines pages; editable starter token-efficiency policy; immutable instruction versions with optimistic concurrency and restore; expiring single-use machine enrolment; revocable device credentials; ETag-based downloads and per-agent reports; Codex/Claude/Gemini global-file adapters; guided CLI setup with detected-agent and revision review; automatic user-level startup; local/shared comparison with persistent Keep mine and backed-up Use shared choices; portable instruction-history backup and machine inventory; neutral offline status and explicit file-delivery wording; process locking and Windows DPAPI connection protection.
+Notes updated 17 November 2026. The implementation and interface refinements were committed and pushed to `main` in `bd84a7d` on 14 November. The verification results below describe that implementation session; this notes update does not represent a new test run or deployment.
+
+Implemented: restrained sidebar/surface redesign; Overview, Instructions and Machines pages; editable starter token-efficiency policy; immutable instruction versions with optimistic concurrency and restore; expiring single-use machine enrolment; revocable device credentials; ETag-based downloads and per-agent reports; Codex/Claude/Gemini global-file adapters; guided CLI setup with detected-agent and revision review; automatic user-level startup; local/shared comparison with persistent Keep mine and backed-up Use shared choices; portable instruction-history backup and machine inventory; neutral offline status and explicit file-delivery wording; process locking and Windows DPAPI connection protection.
+
+The approved Skills layout uses a full-width list with skill names and descriptions first, quieter identifiers and version metadata, an **Add skill** menu for create/import/discover, and a **More** menu for backup/export/archive actions. **Use these skills on your computer** is an expandable section above the list, as requested. The installation sidebar was removed and dark-mode theme-button contrast corrected. The final help-section move passed a build check; the preceding library changes passed the full Linux suite and `go vet`.
 
 Verification: full Linux test binary passes under WSL; Windows feature tests cover registration through file application and reporting, DPAPI, conflict/rollback, malformed manifests, offline/cancellation behaviour, status presentation, authentication and CSRF. `go vet` passes. Linux and macOS CLI cross-builds pass. Windows full-suite failures remain in seven existing Unix-mode/doctor permission assertions; the test-home isolation and output-pipe deadlock found during this work have been fixed.
 
@@ -12,7 +16,7 @@ Native startup verification: isolated Windows scheduled-task and Linux user-syst
 
 Not verified: automated rendered desktop/mobile/dark-mode UI (browser host unavailable and native window capture inconsistent); actual agent consumption of generated files; native macOS startup; race detector (CGO toolchain unavailable). No deployment has been performed. Later-phase Cursor/MCP/profile/project functionality remains outside this initial implementation.
 
-Local preview uses an isolated temporary SQLite database at port 8766; the user approved the simplified direction. Tests run before the isolation fix wrote fixture skills into the real Windows `.agents/skills` directory; those files were disclosed and left untouched because their prior contents were not recorded.
+The implementation session used an isolated temporary SQLite database at port 8766 for preview; the user approved the simplified direction. Do not assume that preview process is still running. Reference screenshots `example.png` and `Untitled2.png` were left local and untracked. Tests run before the isolation fix wrote fixture skills into the real Windows `.agents/skills` directory; those files were disclosed and left untouched because their prior contents were not recorded.
 
 The new brief supersedes the original V0 scope below. Evolve the existing application into a central AI-agent configuration manager, preserving the skill library and CLI. The initial delivery centres on shared instructions, registered machines, immutable configuration history, safe automatic delivery, and Codex, Claude Code, and Gemini CLI adapters. Cursor, MCP management, advanced profiles, and project rules follow later.
 
@@ -31,6 +35,8 @@ These are capabilities documented by their publishers, not independently tested 
 Opportunity hypothesis: a small self-hosted service with excellent visibility into delivery, safe treatment of local changes, and minimal setup. This is a product hypothesis, not a verified absence of competing features.
 
 ### Proposed architecture
+
+Current implementation uses `instruction_revisions`, `device_enrolments`, `devices`, and `device_agent_status`, with one global instruction stream per user. Browser forms at `/instructions` manage editing and restore; `/machines` manages enrolment and revocation. Device endpoints are `POST /api/v1/devices/register`, `GET /api/v1/sync/manifest`, and `POST /api/v1/sync/status`. The broader schema and configuration API below are a future design, not implemented endpoints.
 
 Retain Go, server-rendered HTML, progressive JavaScript, and SQLite for the first self-hosted release. Keep one server process and a separate cross-platform Go client process; avoid a frontend rewrite, queue infrastructure, and WebSockets until required. Keep deployment compatible with the existing systemd/Caddy and Docker options. PostgreSQL is a later option if concurrent hosted usage warrants it.
 
@@ -74,7 +80,7 @@ MCP secrets remain out of scope for the MVP. Later use local credential referenc
 
 Use `example.png` as the information-hierarchy reference: a concise status summary, global policies, then connected machines. Apply restrained system typography, neutral surfaces, generous spacing, subtle separators, and colour primarily for actionable status. Remove the decorative grid and oversized boxed headers. Support dark mode without making every surface a bordered card.
 
-Primary navigation: Overview, Instructions, Machines, Skills, History. Keep setup and account tools secondary. Existing collections and imports remain accessible within Skills. Do not present later-phase MCP/profile controls as working features.
+Primary navigation: Overview, Instructions, Machines, Skills. History is an expandable section within Instructions. Setup, collections, discovery, account tools and administration are secondary under the sidebar's More section. Imports are also available through Add skill on the Skills page. Do not present later-phase MCP/profile controls as working features.
 
 Only report “All synced” when every assigned active device has acknowledged the desired revision recently. Distinguish pending, synced, offline, conflict and error using text as well as colour. Empty states must guide registration or instruction creation; never invent machines or successful syncs. Preview generated output before publication and explain when an agent needs a new session to load it.
 

@@ -4,6 +4,8 @@
 
 The dashboard now includes **Overview**, **Instructions**, and **Machines** alongside the existing skill library. Save global Markdown instructions with immutable version history, restore an earlier version, and deliver updates to registered machines using the CLI watcher.
 
+The **Skills** page uses a full-width list with names and descriptions first. **Add skill** offers creation, import, and discovery; **More** contains backups, GitHub export, and archived skills. Expand **Use these skills on your computer** above the list for installation guidance. Instruction history is available within **Instructions**; setup, collections, and account tools remain in the sidebar's **More** section.
+
 1. Open **Instructions** and save a version.
 2. Open **Machines**, choose **Connect a machine**, and copy the single-use code (valid for ten minutes).
 3. Run `skillsdex agent setup --server https://YOUR_SERVER` in that machine's terminal. Paste the code, review the detected agents and instructions, then choose automatic updates at login.
